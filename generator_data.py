@@ -5,40 +5,39 @@ import random
 
 def calculate_target_y(location_score, party_score, story_importance, level_rarity_delta, is_duplicate, type_id,
                        synergy_flag):
-    # 1. Базовая семантика
-    semantic_base = max(location_score, party_score) * 0.7 + min(location_score, party_score) * 0.3
+    # НОРМАЛИЗАЦИЯ: Растягиваем реальные скоры (0.1 - 0.4) в шкалу (0.25 - 1.0)
+    norm_loc = min(1.0, location_score * 2.5)
+    norm_party = min(1.0, party_score * 2.5)
 
-    # 2. Множитель важности
+    # 1. Базовая семантика (теперь использует нормализованные значения)
+    semantic_base = max(norm_loc, norm_party) * 0.7 + min(norm_loc, norm_party) * 0.3
+
     y = semantic_base * (0.4 + 0.6 * story_importance)
 
-    # 3. СТРОГАЯ СИНЕРГИЯ (Критично для твоего запроса)
     if synergy_flag == 0:
-        y *= 0.15  # Резко обрезаем оценку, если предмет не подходит классам
+        y *= 0.15
     else:
-        y *= 1.1  # Небольшой бонус за попадание в билд
+        y *= 1.1
 
-    # 4. Редкость (Delta)
     if level_rarity_delta > 0:
         penalty = 1.0 - (level_rarity_delta * 0.4 * (1.0 - story_importance))
         y *= max(0.1, penalty)
     elif level_rarity_delta < -1:
         y *= max(0.2, 1.0 - (abs(level_rarity_delta) * 0.2 * story_importance))
 
-    # 5. Дубликаты
-    if is_duplicate == 1:
-        y *= 0.1
-
-    y += random.gauss(0, 0.03)  # Шум
+    if is_duplicate == 1: y *= 0.1
+    y += random.gauss(0, 0.03)
     return float(round(np.clip(y, 0.0, 1.0), 4))
 
 
 def generate_dnd_dataset(num_samples=25000):
     data = []
-    types = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]  # TYPE_MAP
+    types = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
 
     for _ in range(num_samples):
-        loc_s = round(random.uniform(0.3, 0.9), 4)
-        par_s = round(random.uniform(0.3, 0.9), 4)
+        # ГЕНЕРИРУЕМ РЕАЛИСТИЧНЫЕ СКОРЫ!
+        loc_s = round(random.uniform(0.05, 0.45), 4)
+        par_s = round(random.uniform(0.05, 0.45), 4)
         imp = round(random.uniform(0.0, 1.0), 4)
         delta = random.randint(-4, 4)
         is_dup = 1 if random.random() < 0.05 else 0

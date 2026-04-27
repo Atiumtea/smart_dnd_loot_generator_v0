@@ -276,8 +276,8 @@ class SmartLootGenerator:
         print("=" * 50)
         for i in range(min(3, len(candidates))):
             c = candidates[i]
-            # Визуальный маркер: прошел предмет порог 0.22 или нет
-            status = "✅ ПРОШЕЛ" if c['final_score'] >= 0.22 else "❌ ОТКЛОНЕН"
+            # Визуальный маркер: прошел предмет порог 0.36 или нет
+            status = "✅ ПРОШЕЛ" if c['final_score'] >= 0.36 else "❌ ОТКЛОНЕН"
 
             print(f"{i + 1}. {c['name']} ({c['rarity']}) -> {status}")
             print(f"   📊 Итоговый MLP Score: {c['final_score']:.3f}")
@@ -292,8 +292,8 @@ class SmartLootGenerator:
         for i, item in enumerate(candidates):
             item['final_score'] = float(predictions[i])
 
-            # Оставляем только те предметы, которые прошли порог 0.25
-            if item['final_score'] >= 0.25:
+            # Оставляем только те предметы, которые прошли порог 0.36
+            if item['final_score'] >= 0.36:
                 valid_candidates.append(item)
 
         # Сортируем по убыванию вероятности
