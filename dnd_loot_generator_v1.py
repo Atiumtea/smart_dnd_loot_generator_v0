@@ -1,15 +1,15 @@
 import os
-import warnings
 import logging
+import warnings
 
-# ==========================================
-# 0. ГЛУШИТЕЛЬ ЛОГОВ (Должен быть в самом верху)
-# ==========================================
-os.environ['HF_HUB_DISABLE_SYMLINKS_WARNING'] = '1'
+# 1. Глушим вывод на уровне системных переменных
 os.environ['TRANSFORMERS_VERBOSITY'] = 'error'
-warnings.filterwarnings("ignore")
+os.environ['SAFETENSORS_FAST_GPU'] = '1'
+
+# 2. Глушим вывод на уровне Python-логгеров
 logging.getLogger("transformers.modeling_utils").setLevel(logging.ERROR)
 logging.getLogger("sentence_transformers").setLevel(logging.ERROR)
+warnings.filterwarnings("ignore")
 
 import torch
 import torch.nn as nn
@@ -316,13 +316,20 @@ if __name__ == "__main__":
     while True:
         print("-" * 55)
         command = input("Нажмите [Enter] для генерации или 'q' для выхода: ").strip().lower()
-        if command == 'q':
+        if command in ['q', 'й']:
             print("Удачных игр!")
             break
 
         try:
-            party_level = int(input("⚔️ Уровень группы (1-20): "))
-            story_importance = float(input("🔥 Важность боя (0.0 - 1.0): "))
+            # Считываем как строку, чтобы проверить на 'q', и только потом переводим в число
+            lvl_input = input("⚔️ Уровень группы (1-20): ").strip().lower()
+            if lvl_input in ['q', 'й']: break
+            party_level = int(lvl_input)
+
+            imp_input = input("🔥 Важность боя (0.0 - 1.0): ").strip().lower()
+            if imp_input in ['q', 'й']: break
+            story_importance = float(imp_input)
+
         except ValueError:
             print("⚠️ Ошибка ввода чисел.")
             continue

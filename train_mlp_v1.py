@@ -30,10 +30,9 @@ class DnDDataset(Dataset):
 # 2. АРХИТЕКТУРА НЕЙРОСЕТИ (MLP)
 # ==========================================
 class DnDItemRanker(nn.Module):
-    def __init__(self, input_size=5):  # Убедись, что тут 5!
+    def __init__(self, input_size=7):
         super(DnDItemRanker, self).__init__()
 
-        # Слои должны быть сдвинуты на 8 пробелов от края файла
         self.network = nn.Sequential(
             nn.Linear(input_size, 16),
             nn.ReLU(),
@@ -61,15 +60,12 @@ def train_model():
 
     # Разделяем на фичи (X) и целевую переменную (y)
     # Проверь, что список колонок совпадает с твоим новым CSV
-    X = df[['location_score', 'party_score', 'story_importance', 'level_rarity_delta', 'is_duplicate']].values
+    X = df[['loc_score', 'party_score', 'story_importance', 'level_rarity_delta', 'is_duplicate', 'type_id', 'synergy_flag']].values
     y = df['target_y'].values
 
     # Разделяем на обучающую (80%) и тестовую (20%) выборки
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-    # МАСШТАБИРОВАНИЕ (CRITICAL!)
-    # Нейросети плохо работают, если одни фичи от 0 до 1, а другие от -4 до 4.
-    # StandardScaler приведет всё к нормальному распределению (среднее 0, дисперсия 1).
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
@@ -86,7 +82,7 @@ def train_model():
     test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False)
 
     # Инициализация модели, функции потерь и оптимизатора
-    model = DnDItemRanker(input_size=5)
+    model = DnDItemRanker(input_size=7)
     # MSELoss (Mean Squared Error) отлично подходит для предсказания конкретного скора
     criterion = nn.MSELoss()
     # Adam - лучший универсальный оптимизатор

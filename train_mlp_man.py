@@ -9,10 +9,10 @@ import pickle
 
 
 # ==========================================
-# 1. АРХИТЕКТУРА (5 входов)
+# 1. АРХИТЕКТУРА (7 входов)
 # ==========================================
 class DnDItemRanker(nn.Module):
-    def __init__(self, input_size=5):
+    def __init__(self, input_size=7):
         super(DnDItemRanker, self).__init__()
         self.network = nn.Sequential(
             nn.Linear(input_size, 16),
@@ -63,7 +63,10 @@ def train_with_gold_standard():
         final_df = synth_df
 
     # Подготовка признаков
-    features = ['loc_score', 'party_score', 'story_importance', 'level_rarity_delta', 'is_duplicate']
+    features = [
+        'loc_score', 'party_score', 'story_importance',
+        'level_rarity_delta', 'is_duplicate', 'type_id', 'synergy_flag'
+    ]
     X = final_df[features].values
     y = final_df['target_y'].values
 
