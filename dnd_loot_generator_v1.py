@@ -20,7 +20,7 @@ import random
 import re
 from sentence_transformers import SentenceTransformer, util
 
-# Словарь перевода типов в числа (для нейросети)
+# Словарь перевода типов предметов в числа
 TYPE_MAP = {
     'weapon': 0.1,
     'armor': 0.2,
@@ -35,7 +35,7 @@ TYPE_MAP = {
 
 CLASS_SYNERGY = {
     'barbarian': ['weapon', 'potion', 'ring', 'wondrous item'],
-    'monk': ['weapon', 'potion', 'ring', 'wondrous item'],  # Монахам не нужна броня
+    'monk': ['weapon', 'potion', 'ring', 'wondrous item'],
     'fighter': ['weapon', 'armor', 'potion', 'ring', 'wondrous item'],
     'rogue': ['weapon', 'armor', 'potion', 'ring', 'wondrous item'],
 
@@ -51,7 +51,6 @@ CLASS_SYNERGY = {
     'warlock': ['weapon', 'potion', 'ring', 'scroll', 'wand', 'staff', 'rod', 'wondrous item'],
 
     'artificer': ['weapon', 'armor', 'potion', 'ring', 'scroll', 'wand', 'staff', 'rod', 'wondrous item']
-    # Используют почти всё
 }
 
 # ==========================================

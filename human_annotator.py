@@ -26,11 +26,9 @@ import torch
 import re
 import textwrap
 from sentence_transformers import SentenceTransformer, util
-
 # ==========================================
-# 1. КОНСТАНТЫ И МАТРИЦЫ (Синхронизировано с генератором)
+# 1. КОНСТАНТЫ И МАТРИЦЫ
 # ==========================================
-
 TYPE_MAP = {
     'weapon': 0.1, 'armor': 0.2, 'potion': 0.3, 'ring': 0.4,
     'scroll': 0.5, 'wand': 0.6, 'staff': 0.7, 'rod': 0.8, 'wondrous item': 0.9,
@@ -52,66 +50,62 @@ CLASS_SYNERGY = {
     'artificer': ['weapon', 'armor', 'potion', 'ring', 'scroll', 'wand', 'staff', 'rod', 'wondrous item']
 }
 
-BIOMES = [
-    # --- Классическое Подземелье и Город ---
-    "dark crypt, shadows, dust, cobwebs",
-    "abandoned mine, unstable tunnels, darkness, minecarts",
-    "city slums, narrow alleys, rain, mud",
-    "sewers network, toxic sludge, filth, rats",
-    "noble estate, marble floors, hidden vault, luxury",
-    "wizard tower, arcane runes, floating books, observatory",
-
-    # --- Дикая Природа ---
-    "ancient forest, thick vines, fog, overgrown ruins",
-    "frozen tundra, howling blizzard, ancient ice, frost",
-    "scorching desert, sandstorm, ancient pyramid, oasis",
-    "stinking swamp, quicksand, dead trees, mist",
-    "high mountain peak, lightning storms, sheer cliffs",
-
-    # --- Экзотика и Другие Планы (High Fantasy) ---
-    "shipwreck, underwater trench, coral reef, high pressure",
-    "active volcano crater, magma pools, sulfur, heat",
-    "feywild glade, glowing mushrooms, eternal twilight, giant flowers",
-    "shadowfell wasteland, decaying matter, despair, monochrome",
-    "underdark fungal forest, glowing spores, stalactites, silent",
-    "astral plane, floating debris, silver cords, zero gravity",
-    "clockwork citadel, grinding gears, steam, brass mechanisms"
+TERRAIN = [
+    "dark crypt", "abandoned mine", "city slums", "sewers network",
+    "noble estate", "wizard tower", "ancient forest", "frozen tundra",
+    "scorching desert", "stinking swamp", "mountain peak", "shipwreck",
+    "volcanic crater", "feywild glade", "shadowfell wasteland", "astral plane",
+    "underground cavern", "ruined temple", "floating island", "tavern basement"
 ]
 
-ENEMIES = [
-    # --- Гуманоиды и Преступники ---
-    "bandit highwaymen, cutthroats, poison",
-    "pirate mutineers, swashbucklers, cannons",
-    "cultists of the old god, dark rituals, daggers",
-    "drow assassins, poisoned crossbows, darkness",
-    "rogue mercenaries, heavily armored veterans",
-
-    # --- Нежить ---
-    "undead horde, zombies, skeletons, necromancer",
-    "vampire lord, vampire spawn, bats, blood",
-    "lich, skeletal mages, phylactery, high magic",
-    "banshee, specters, ghosts, necrotic drain",
-
-    # --- Чудовища и Аберрации ---
-    "mind flayer colony, intellect devourers, psionics",
-    "beholder, disintegration rays, anti-magic cone",
-    "yuan-ti abomination, snake cultists, venom",
-    "aboleth, mind-controlled thralls, deep water, slime",
-    "giant spiders, web traps, phase spiders",
-    "mimics, ropers, false treasure, ambush",
-
-    # --- Магические и Планарные существа ---
-    "red dragon, kobold minions, fire breath, hoard",
-    "hag coven, animated trees, dark curses, witchcraft",
-    "elemental prince, fire mephits, chaos, magma",
-    "clockwork golems, rogue artificer, constructs",
-    "fey tricksters, dryads, illusions, charm",
-    "demon lord cultists, hell hounds, abyssal portals"
+ATMOSPHERE = [
+    "thick fog", "heavy rain", "pitch black", "cobwebs and dust",
+    "smell of sulfur", "glowing arcane runes", "howling blizzard",
+    "eerie silence", "bloodstains", "magical twilight", "overgrown with vines",
+    "crumbling walls", "knee-deep mud", "oppressive heat", "toxic fumes"
 ]
 
-CLASSES = ["Fighter", "Rogue", "Wizard", "Cleric", "Paladin", "Ranger", "Bard", "Warlock", "Sorcerer", "Druid", "Monk",
-           "Barbarian", "Artificer"]
+ENEMY_FACTIONS = [
+    "bandit highwaymen", "pirate mutineers", "doomsday cultists", "drow assassins",
+    "undead horde", "vampire spawn", "necromancer and skeletons",
+    "mind flayer colony", "beholder", "yuan-ti abominations", "giant spiders",
+    "mimics and ropers", "young red dragon", "hag coven", "fire elementals",
+    "abyssal demons", "goblin raiding party", "rogue artificer constructs"
+]
 
+ENEMY_ACTIONS = [
+    "setting up an ambush", "guarding a locked chest", "conducting a dark ritual",
+    "sleeping", "patrolling the area", "fighting a rival group",
+    "interrogating a prisoner", "feasting on a corpse", "searching for intruders",
+    "repairing their weapons", "hiding in the shadows", "worshipping an idol"
+]
+
+CLASSES = [
+    "Fighter", "Rogue", "Wizard", "Cleric", "Paladin", "Ranger",
+    "Bard", "Warlock", "Sorcerer", "Druid", "Monk", "Barbarian", "Artificer"
+]
+
+
+def generate_dynamic_scenario():
+    """Собирает уникальный сценарий из 4 независимых модулей."""
+    terrain = random.choice(TERRAIN)
+    atmosphere = random.choice(ATMOSPHERE)
+    faction = random.choice(ENEMY_FACTIONS)
+    action = random.choice(ENEMY_ACTIONS)
+
+    # Итоговая строка локации получается очень насыщенной ключевыми словами
+    loc = f"{terrain}, {atmosphere}, {faction}, {action}"
+
+    # Партия от 3 до 5 человек
+    party_size = random.randint(3, 5)
+    party = ", ".join(random.sample(CLASSES, k=party_size))
+
+    level = random.randint(1, 20)
+
+    # Распределение важности: чаще рядовые бои, реже эпик
+    imp = round(random.betavariate(2, 5), 2)
+
+    return {"loc": loc, "party": party, "level": level, "imp": imp}
 
 # ==========================================
 # 2. ВСПОМОГАТЕЛЬНАЯ ЛОГИКА
@@ -139,12 +133,6 @@ def get_rarity_val(rarity_str, expected_rarity=3):
     if re.search(r'\brare\b', r): found.append(3)
     if re.search(r'\bcommon\b', r): found.append(1)
     return min(found, key=lambda x: abs(x - expected_rarity)) if found else 1
-
-
-def generate_dynamic_scenario():
-    loc = f"{random.choice(BIOMES)}, {random.choice(ENEMIES)}"
-    party = ", ".join(random.sample(CLASSES, k=random.randint(3, 5)))
-    return {"loc": loc, "party": party, "level": random.randint(1, 20), "imp": round(random.betavariate(2, 5), 2)}
 
 
 # ==========================================
