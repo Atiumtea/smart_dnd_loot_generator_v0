@@ -1,6 +1,7 @@
 import os
 import logging
 import warnings
+from models import DnDItemRanker, CLASS_SYNERGY, get_type_ohe
 
 # 1. Глушим вывод на уровне системных переменных
 os.environ['TRANSFORMERS_VERBOSITY'] = 'error'
@@ -20,18 +21,7 @@ import random
 import re
 from sentence_transformers import SentenceTransformer, util
 
-# Словарь перевода типов предметов в числа
-TYPE_MAP = {
-    'weapon': 0.1,
-    'armor': 0.2,
-    'potion': 0.3,
-    'ring': 0.4,
-    'scroll': 0.5,
-    'wand': 0.6,
-    'staff': 0.7,
-    'rod': 0.8,
-    'wondrous item': 0.9,
-}
+
 
 CLASS_SYNERGY = {
     'barbarian': ['weapon', 'potion', 'ring', 'wondrous item'],
@@ -53,21 +43,6 @@ CLASS_SYNERGY = {
     'artificer': ['weapon', 'armor', 'potion', 'ring', 'scroll', 'wand', 'staff', 'rod', 'wondrous item']
 }
 
-# ==========================================
-# 1. АРХИТЕКТУРА СЕТИ
-# ==========================================
-class DnDItemRanker(nn.Module):
-    def __init__(self, input_size=7):
-        super(DnDItemRanker, self).__init__()
-        self.network = nn.Sequential(
-            nn.Linear(input_size, 16),
-            nn.ReLU(),
-            nn.Linear(16, 8),
-            nn.ReLU(),
-            nn.Linear(8, 1),
-            nn.Sigmoid()
-        )
-
     def forward(self, x):
         return self.network(x)
 
@@ -81,13 +56,11 @@ def get_rarity_val(rarity_str, expected_rarity=3):
     """
     r = str(rarity_str).lower()
 
-    # 1. Если редкость плавающая - предмет ИДЕАЛЬНО подстраивается под партию
     if 'varies' in r:
         return expected_rarity
 
     found_rarities = []
 
-    # 2. Ищем все возможные редкости в строке
     if 'artifact' in r: found_rarities.append(6)
     if 'legendary' in r: found_rarities.append(5)
 
@@ -99,16 +72,12 @@ def get_rarity_val(rarity_str, expected_rarity=3):
         found_rarities.append(2)
         r = r.replace('uncommon', '')  # Вырезаем, чтобы не было ложного 'common'
 
-    # Точный поиск слов (границы слов \b)
     if re.search(r'\brare\b', r): found_rarities.append(3)
     if re.search(r'\bcommon\b', r): found_rarities.append(1)
 
-    # 3. Базовый случай: ничего не нашли
     if not found_rarities:
         return 1
 
-    # 4. МАГИЯ ДИНАМИКИ: Если найдено несколько редкостей (например, масштабируемый лут)
-    # Выбираем ту, которая ближе всего к ожидаемой редкости партии!
     best_rarity = min(found_rarities, key=lambda x: abs(x - expected_rarity))
 
     return best_rarity
@@ -123,7 +92,6 @@ def get_expected_rarity_for_level(level):
         return 4
     else:
         return 5
-
 
 # ==========================================
 # 3. ФИНАЛЬНЫЙ РАНДОМАЙЗЕР (ИГРОВАЯ ЛОГИКА)
@@ -252,50 +220,38 @@ class SmartLootGenerator:
             l_score = loc_scores[idx].item()
             p_score = party_scores[idx].item()
 
-            # 1. Редкость (Дельта)
             delta = get_rarity_val(item['rarity'], expected_rarity) - expected_rarity
-
-            # 2. РЕАЛЬНЫЕ ДУБЛИКАТЫ
-            # Проверяем, есть ли имя предмета в переданном списке party_inventory
             is_duplicate = 1.0 if str(item['name']).lower() in [i.lower() for i in party_inventory] else 0.0
 
-            # 3. КАТЕГОРИЯ ПРЕДМЕТА
+            # 3. КАТЕГОРИЯ ПРЕДМЕТА (One-Hot Encoding)
             item_type_str = str(item.get('type', 'wondrous item')).lower()
-            # Ищем базовый тип, игнорируя приписки типа "(requires attunement)"
-            type_id = 0.9  # По умолчанию Wondrous
-            for k, v in TYPE_MAP.items():
-                if k in item_type_str:
-                    type_id = v
-                    break
+            type_ohe_list = get_type_ohe(item_type_str)
 
-            # 4. СТРОГАЯ СИНЕРГИЯ (Никакой жалости)
+            # 4. СТРОГАЯ СИНЕРГИЯ
             synergy_flag = 0.0
             party_lower = party_text.lower()
             for cls, allowed_types in CLASS_SYNERGY.items():
                 if cls in party_lower:
-                    # Если хотя бы один класс в партии может использовать этот предмет
                     if any(t in item_type_str for t in allowed_types):
                         synergy_flag = 1.0
                         break
 
-            # ФОРМИРУЕМ НОВЫЙ ВЕКТОР (7 признаков)
-            features_list.append([
-                l_score, p_score, story_importance, delta, is_duplicate, type_id, synergy_flag
-            ])
+            # ФОРМИРУЕМ НОВЫЙ ВЕКТОР (6 базовых + 9 OHE = 15 признаков)
+            feature_vector = [
+                                 l_score, p_score, story_importance, delta, is_duplicate, synergy_flag
+                             ] + type_ohe_list
 
-            # Сохраняем для дебага
+            features_list.append(feature_vector)
+
             item_dict = item.to_dict()
             item_dict.update({
-                'loc_score': l_score,
-                'party_score': p_score,
-                'delta': delta,
-                'is_duplicate': is_duplicate,
-                'synergy': synergy_flag
+                'loc_score': l_score, 'party_score': p_score,
+                'delta': delta, 'synergy': synergy_flag
             })
             candidates.append(item_dict)
 
-
         # --- ЭТАП 3: MLP ПРЕДСКАЗАНИЕ ---
+        # Теперь X_raw будет иметь shape (50, 15)
         X_raw = np.array(features_list)
         X_scaled = self.current_scaler.transform(X_raw)
         X_tensor = torch.tensor(X_scaled, dtype=torch.float32)

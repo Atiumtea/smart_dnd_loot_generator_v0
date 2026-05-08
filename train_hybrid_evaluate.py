@@ -11,30 +11,18 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import pickle
 import os
+from models import DnDItemRanker, ITEM_TYPES
 
 sns.set_theme(style="whitegrid")
 plt.rcParams['figure.figsize'] = (10, 6)
 
 
 # ==========================================
-# 1. АРХИТЕКТУРА И ДАТАСЕТ
+# 1. ДАТАСЕТ
 # ==========================================
-class DnDItemRanker(nn.Module):
-    def __init__(self, input_size=7):
-        super(DnDItemRanker, self).__init__()
-        self.network = nn.Sequential(
-            nn.Linear(input_size, 32),
-            nn.ReLU(),
-            nn.Dropout(0.1),
-            nn.Linear(32, 16),
-            nn.ReLU(),
-            nn.Linear(16, 1),
-            nn.Sigmoid()
-        )
 
     def forward(self, x):
         return self.network(x)
-
 
 class DnDDataset(Dataset):
     def __init__(self, X, y):
@@ -46,7 +34,6 @@ class DnDDataset(Dataset):
 
     def __getitem__(self, idx):
         return self.X[idx], self.y[idx]
-
 
 # ==========================================
 # 2. ПОДГОТОВКА ГИБРИДНЫХ ДАННЫХ
@@ -65,12 +52,12 @@ def load_hybrid_data():
 
         print(f"✨ Найдено {len(gold_df)} эталонных оценок. Начинаем интеграцию...")
 
+        X = df[features].values
+        y = df['target_y'].values
+        is_manual = df[
+            'is_manual'].values
+
         copies = []
-        for _ in range(100):
-            noisy_copy = gold_df.copy()
-            noise = np.random.normal(0, 0.015, size=len(gold_df))
-            noisy_copy['target_y'] = np.clip(noisy_copy['target_y'] + noise, 0.0, 1.0)
-            copies.append(noisy_copy)
 
         gold_repeated = pd.concat(copies, ignore_index=True)
 
@@ -90,25 +77,45 @@ def load_hybrid_data():
 def train_and_evaluate():
     df = load_hybrid_data()
 
-    features = ['loc_score', 'party_score', 'story_importance', 'level_rarity_delta', 'is_duplicate', 'type_id',
-                'synergy_flag']
+    base_features = ['loc_score', 'party_score', 'story_importance', 'level_rarity_delta', 'is_duplicate',
+                     'synergy_flag']
+    type_features = [f'type_{t.replace(" ", "_")}' for t in ITEM_TYPES]
+    features = base_features + type_features
+
+
     X = df[features].values
     y = df['target_y'].values
+    is_manual = df[
+        'is_manual'].values
 
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.15, random_state=42)
+    X_train, X_test, y_train, y_test, is_man_train, _ = train_test_split(
+        X, y, is_manual, test_size=0.15, random_state=42
+    )
+
+    manual_indices = np.where(is_man_train == 1)[0]
+
+    if len(manual_indices) > 0:
+        X_manual = X_train[manual_indices]
+        y_manual = y_train[manual_indices]
+
+        X_train = np.vstack([X_train] + [X_manual] * 50)
+
+        y_repeated = np.concatenate([y_manual] * 50)
+        noise = np.random.normal(0, 0.015, size=len(y_repeated))
+        y_repeated = np.clip(y_repeated + noise, 0.0, 1.0)
+        y_train = np.concatenate([y_train, y_repeated])
 
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
 
-    # Перезаписываем scaler для боевого генератора
-    with open('scaler_hybrid.pkl', 'wb') as f:
+    with open('scaler.pkl', 'wb') as f:
         pickle.dump(scaler, f)
 
     train_loader = DataLoader(DnDDataset(X_train_scaled, y_train), batch_size=128, shuffle=True)
     test_loader = DataLoader(DnDDataset(X_test_scaled, y_test), batch_size=128, shuffle=False)
 
-    model = DnDItemRanker(input_size=7)
+    model = DnDItemRanker(input_size=15)
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=0.003)
 

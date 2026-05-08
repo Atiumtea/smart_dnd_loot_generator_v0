@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 import random
 import math
-
+from models import ITEM_TYPES, get_type_ohe
 
 def smooth_normalize(score, midpoint=0.25, steepness=15):
     """
@@ -13,7 +13,7 @@ def smooth_normalize(score, midpoint=0.25, steepness=15):
     return 1 / (1 + math.exp(-steepness * (score - midpoint)))
 
 
-def calculate_target_y(location_score, party_score, story_importance, level_rarity_delta, is_duplicate, type_id,
+def calculate_target_y(location_score, party_score, story_importance, level_rarity_delta, is_duplicate,
                        synergy_flag):
     # 1. Плавная нелинейная нормализация
     norm_loc = smooth_normalize(location_score)
@@ -48,27 +48,35 @@ def calculate_target_y(location_score, party_score, story_importance, level_rari
 
 def generate_dnd_dataset(num_samples=25000):
     data = []
-    types = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
 
     for _ in range(num_samples):
-        # ВАЖНО: Используем распределение Гаусса (колокол) вместо uniform.
-        # Это идеально имитирует реальную работу векторной модели!
         loc_s = round(np.clip(random.gauss(0.25, 0.08), 0.0, 1.0), 4)
         par_s = round(np.clip(random.gauss(0.25, 0.08), 0.0, 1.0), 4)
-
         imp = round(random.uniform(0.0, 1.0), 4)
         delta = random.randint(-4, 4)
-        is_dup = 1 if random.random() < 0.05 else 0
-        t_id = random.choice(types)
+        is_dup = 1.0 if random.random() < 0.05 else 0.0
+
+        # Выбираем случайный ТИП строкой, а не числом
+        chosen_type = random.choice(ITEM_TYPES)
         syn = 1.0 if random.random() < 0.8 else 0.0
 
-        target = calculate_target_y(loc_s, par_s, imp, delta, is_dup, t_id, syn)
+        target = calculate_target_y(loc_s, par_s, imp, delta, is_dup, chosen_type, syn)
 
-        data.append({
+        # Получаем One-Hot массив (9 колонок)
+        type_ohe = get_type_ohe(chosen_type)
+
+        # Собираем базовые фичи
+        row = {
             'loc_score': loc_s, 'party_score': par_s, 'story_importance': imp,
             'level_rarity_delta': delta, 'is_duplicate': is_dup,
-            'type_id': t_id, 'synergy_flag': syn, 'target_y': target
-        })
+            'synergy_flag': syn, 'target_y': target
+        }
+
+        # Динамически добавляем 9 колонок с типами (type_weapon, type_armor и т.д.)
+        for i, t in enumerate(ITEM_TYPES):
+            row[f'type_{t.replace(" ", "_")}'] = type_ohe[i]
+
+        data.append(row)
 
     return pd.DataFrame(data)
 
