@@ -16,6 +16,11 @@ from models import DnDItemRanker, ITEM_TYPES
 sns.set_theme(style="whitegrid")
 plt.rcParams['figure.figsize'] = (10, 6)
 
+# ==========================================
+# ⚙️ НАСТРОЙКИ ОБУЧЕНИЯ
+# ==========================================
+# Поставь False, когда разметишь хотя бы 500-1000 предметов вручную!
+USE_SYNTHETIC = True
 
 # ==========================================
 # 1. ДАТАСЕТ
@@ -35,30 +40,39 @@ class DnDDataset(Dataset):
 # 2. ПОДГОТОВКА ГИБРИДНЫХ ДАННЫХ
 # ==========================================
 def load_hybrid_data():
-    print("📦 Загрузка синтетической базы...")
-    synth_df = pd.read_csv('dnd_mlp_training_data.csv', sep=';')
-    synth_df['is_manual'] = 0  # Добавляем флаг синтетики
+    if USE_SYNTHETIC:
+        print("📦 Загрузка синтетической базы (ВКЛЮЧЕНА)...")
+        try:
+            synth_df = pd.read_csv('dnd_mlp_training_data.csv', sep=';')
+            synth_df['is_manual'] = 0
+        except FileNotFoundError:
+            print("⚠️ Синтетика не найдена! Учимся только на ручной разметке.")
+            synth_df = pd.DataFrame()
+    else:
+        print("🚫 Синтетическая база ОТКЛЮЧЕНА. Режим чистого ML.")
+        synth_df = pd.DataFrame()
 
     try:
         print("🧑‍🏫 Поиск ручной разметки Мастера...")
         gold_df = pd.read_csv('manual_gold_standard.csv', sep=';')
 
-        if len(gold_df) < 5:
-            print("⚠️ В 'manual_gold_standard.csv' слишком мало данных. Учимся только на синтетике.")
-            return synth_df
+        if len(gold_df) < 5 and not USE_SYNTHETIC:
+            print("❌ Слишком мало ручных данных для отключения синтетики! Аварийное завершение.")
+            exit()
 
-        print(f"✨ Найдено {len(gold_df)} эталонных оценок. Начинаем интеграцию...")
-        gold_df['is_manual'] = 1  # Добавляем флаг ручной разметки
+        print(f"✨ Найдено {len(gold_df)} эталонных оценок.")
+        gold_df['is_manual'] = 1
 
         final_df = pd.concat([synth_df, gold_df], ignore_index=True)
-
         final_df = final_df.fillna(0.0)
 
-        print(f"📊 Итоговый гибридный датасет: {len(final_df)} примеров.")
+        print(f"📊 Итоговый объем датасета: {len(final_df)} примеров.")
         return final_df
 
     except FileNotFoundError:
-        print("❌ Файл 'manual_gold_standard.csv' не найден! Учимся только на синтетике.")
+        if not USE_SYNTHETIC:
+            print("❌ Ручной датасет не найден, а синтетика отключена. Не на чем учиться!")
+            exit()
         return synth_df
 
 # ==========================================
@@ -99,7 +113,7 @@ def train_and_evaluate():
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
 
-    with open('scaler.pkl', 'wb') as f:
+    with open('scaler_hybrid.pkl', 'wb') as f:
         pickle.dump(scaler, f)
 
     train_loader = DataLoader(DnDDataset(X_train_scaled, y_train), batch_size=128, shuffle=True)

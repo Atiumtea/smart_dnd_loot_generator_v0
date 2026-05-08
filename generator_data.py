@@ -13,8 +13,7 @@ def smooth_normalize(score, midpoint=0.25, steepness=15):
     return 1 / (1 + math.exp(-steepness * (score - midpoint)))
 
 
-def calculate_target_y(location_score, party_score, story_importance, level_rarity_delta,
-                       synergy_flag):
+def calculate_target_y(location_score, party_score, story_importance, level_rarity_delta, is_duplicate, synergy_flag):
     # 1. Плавная нелинейная нормализация
     norm_loc = smooth_normalize(location_score)
     norm_party = smooth_normalize(party_score)
@@ -38,6 +37,9 @@ def calculate_target_y(location_score, party_score, story_importance, level_rari
     elif level_rarity_delta < -1:
         y *= max(0.2, 1.0 - (abs(level_rarity_delta) * 0.2 * story_importance))
 
+    # 6. Дубликаты
+    if is_duplicate == 1.0:
+        y *= 0.1
 
     y += random.gauss(0, 0.03)  # Легкий шум
     return float(round(np.clip(y, 0.0, 1.0), 4))
@@ -53,23 +55,20 @@ def generate_dnd_dataset(num_samples=25000):
         delta = random.randint(-4, 4)
         is_dup = 1.0 if random.random() < 0.05 else 0.0
 
-        # Выбираем случайный ТИП строкой, а не числом
         chosen_type = random.choice(ITEM_TYPES)
         syn = 1.0 if random.random() < 0.8 else 0.0
 
-        target = calculate_target_y(loc_s, par_s, imp, delta, is_dup, chosen_type, syn)
-
-        # Получаем One-Hot массив (9 колонок)
+        # ПЕРЕДАЕМ РОВНО 6 АРГУМЕНТОВ!
+        target = calculate_target_y(loc_s, par_s, imp, delta, is_dup, syn)
         type_ohe = get_type_ohe(chosen_type)
 
-        # Собираем базовые фичи
+        # СОБИРАЕМ 6 БАЗОВЫХ ПРИЗНАКОВ (добавил is_duplicate)
         row = {
             'loc_score': loc_s, 'party_score': par_s, 'story_importance': imp,
-            'level_rarity_delta': delta,
+            'level_rarity_delta': delta, 'is_duplicate': is_dup,
             'synergy_flag': syn, 'target_y': target
         }
 
-        # Динамически добавляем 9 колонок с типами (type_weapon, type_armor и т.д.)
         for i, t in enumerate(ITEM_TYPES):
             row[f'type_{t.replace(" ", "_")}'] = type_ohe[i]
 

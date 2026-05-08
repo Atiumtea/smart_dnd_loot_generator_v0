@@ -217,14 +217,6 @@ while True:
     p_low = scen['party'].lower()
     for cls, allowed in CLASS_SYNERGY.items():
         if cls in p_low and any(at in i_type for at in allowed):
-            syn = 1.0
-            break
-
-    # Определяем synergy_flag
-    syn = 0.0
-    p_low = scen['party'].lower()
-    for cls, allowed in CLASS_SYNERGY.items():
-        if cls in p_low and any(at in i_type for at in allowed):
             syn = 1.0;
             break
 
@@ -249,7 +241,7 @@ while True:
         )
         math_table.add_row(
             f"[dim][3][/dim] DELTA:     [bold]{delta:<5}[/bold]",
-            f"[dim][4][/dim] TYPE_ID:   [bold]{t_id:<5}[/bold]"
+            f"[dim][4][/dim] TYPE:      [bold]{i_type[:15]}[/bold]"
         )
 
         syn_color = "[bold green]YES[/bold green]" if syn > 0 else "[bold red]NO[/bold red]"

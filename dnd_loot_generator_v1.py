@@ -130,7 +130,7 @@ class SmartLootGenerator:
         except FileNotFoundError:
             print("⚠️ Ошибка: Не найдены файлы скейлеров! Запусти скрипты обучения заново.")
 
-        self.model = DnDItemRanker(input_size=7)
+        self.model = DnDItemRanker(input_size=15)
 
         # Настройки путей к весам
         self.synthetic_weights = 'dnd_ranker_weights.pth'
