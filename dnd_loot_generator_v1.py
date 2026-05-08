@@ -71,7 +71,6 @@ class DnDItemRanker(nn.Module):
     def forward(self, x):
         return self.network(x)
 
-
 # ==========================================
 # 2. ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 # ==========================================
@@ -179,12 +178,56 @@ class SmartLootGenerator:
 
         self.kb_embeddings = torch.tensor(np.stack(self.kb['embedding'].values))
 
-        with open('scaler.pkl', 'rb') as f:
-            self.scaler = pickle.load(f)
+        # Загружаем ОБА скейлера
+        try:
+            with open('scaler_synthetic.pkl', 'rb') as f:
+                self.scaler_synthetic = pickle.load(f)
+            with open('scaler_hybrid.pkl', 'rb') as f:
+                self.scaler_hybrid = pickle.load(f)
+        except FileNotFoundError:
+            print("⚠️ Ошибка: Не найдены файлы скейлеров! Запусти скрипты обучения заново.")
 
         self.model = DnDItemRanker(input_size=7)
-        self.model.load_state_dict(torch.load('dnd_ranker_weights.pth', weights_only=True))
-        self.model.eval()
+
+        # Настройки путей к весам
+        self.synthetic_weights = 'dnd_ranker_weights.pth'
+        self.hybrid_weights = 'dnd_hybrid_weights.pth'
+
+        # Устанавливаем дефолтное состояние (Синтетика)
+        self.current_model_name = "Синтетика (Чистая математика)"
+        self.current_scaler = self.scaler_synthetic
+        self.load_model(self.synthetic_weights)
+
+    def load_model(self, path):
+        try:
+            self.model.load_state_dict(torch.load(path, weights_only=True))
+            self.model.eval()
+        except FileNotFoundError:
+            print(f"\n⚠️ Файл {path} не найден! Убедитесь, что обучили эту модель.")
+
+    def switch_model(self):
+        # Определяем, на что переключаться
+        if "Синтетика" in self.current_model_name:
+            target_path = self.hybrid_weights
+            target_name = "Гибрид (С учетом твоих правок)"
+            target_scaler = self.scaler_hybrid
+        else:
+            target_path = self.synthetic_weights
+            target_name = "Синтетика (Чистая математика)"
+            target_scaler = self.scaler_synthetic
+
+        try:
+            # Переключаем веса
+            self.model.load_state_dict(torch.load(target_path, weights_only=True))
+            self.model.eval()
+
+            # ПЕРЕКЛЮЧАЕМ СКЕЙЛЕР!
+            self.current_scaler = target_scaler
+            self.current_model_name = target_name
+
+            print(f"🔄 Модель успешно переключена на: [ {self.current_model_name} ]")
+        except FileNotFoundError:
+            print(f"⚠️ Ошибка: Файл {target_path} не найден! Сначала запусти соответствующий скрипт обучения.")
 
     def generate_loot(self, location_text, party_text, party_level, story_importance, party_inventory=[]):
         # --- ЭТАП 1: ДВОЙНОЙ ВЕКТОРНЫЙ ПОИСК (Recall) ---
@@ -254,7 +297,7 @@ class SmartLootGenerator:
 
         # --- ЭТАП 3: MLP ПРЕДСКАЗАНИЕ ---
         X_raw = np.array(features_list)
-        X_scaled = self.scaler.transform(X_raw)
+        X_scaled = self.current_scaler.transform(X_raw)
         X_tensor = torch.tensor(X_scaled, dtype=torch.float32)
 
         with torch.no_grad():

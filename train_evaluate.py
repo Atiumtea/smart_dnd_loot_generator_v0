@@ -67,7 +67,7 @@ def train_and_evaluate():
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
 
-    with open('scaler.pkl', 'wb') as f:
+    with open('scaler_synthetic.pkl', 'wb') as f:
         pickle.dump(scaler, f)
 
     train_loader = DataLoader(DnDDataset(X_train_scaled, y_train), batch_size=128, shuffle=True)

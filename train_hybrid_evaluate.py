@@ -65,8 +65,6 @@ def load_hybrid_data():
 
         print(f"✨ Найдено {len(gold_df)} эталонных оценок. Начинаем интеграцию...")
 
-        # ТРЮК 1 & 2: Размножение + Шум (Oversampling & Jittering)
-        # Усиливаем голос человека в 100 раз
         copies = []
         for _ in range(100):
             noisy_copy = gold_df.copy()
@@ -104,7 +102,7 @@ def train_and_evaluate():
     X_test_scaled = scaler.transform(X_test)
 
     # Перезаписываем scaler для боевого генератора
-    with open('scaler.pkl', 'wb') as f:
+    with open('scaler_hybrid.pkl', 'wb') as f:
         pickle.dump(scaler, f)
 
     train_loader = DataLoader(DnDDataset(X_train_scaled, y_train), batch_size=128, shuffle=True)
@@ -146,8 +144,8 @@ def train_and_evaluate():
         if (epoch + 1) % 5 == 0:
             print(f"Эпоха [{epoch + 1}/{epochs}] | Train MSE: {epoch_train_loss:.4f} | Test MSE: {epoch_test_loss:.4f}")
 
-    # Перезаписываем веса для генератора
-    torch.save(model.state_dict(), 'dnd_ranker_weights.pth')
+    # Сохраняем гибрид в отдельный файл
+    torch.save(model.state_dict(), 'dnd_hybrid_weights.pth')
 
     # ==========================================
     # 4. АНАЛИТИКА
