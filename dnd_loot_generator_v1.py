@@ -1,7 +1,6 @@
 import os
 import logging
 import warnings
-from models import DnDItemRanker, CLASS_SYNERGY, get_type_ohe
 
 # 1. Глушим вывод на уровне системных переменных
 os.environ['TRANSFORMERS_VERBOSITY'] = 'error'
@@ -20,34 +19,10 @@ import pickle
 import random
 import re
 from sentence_transformers import SentenceTransformer, util
-
-
-
-CLASS_SYNERGY = {
-    'barbarian': ['weapon', 'potion', 'ring', 'wondrous item'],
-    'monk': ['weapon', 'potion', 'ring', 'wondrous item'],
-    'fighter': ['weapon', 'armor', 'potion', 'ring', 'wondrous item'],
-    'rogue': ['weapon', 'armor', 'potion', 'ring', 'wondrous item'],
-
-    'paladin': ['weapon', 'armor', 'potion', 'ring', 'scroll', 'wondrous item'],
-    'ranger': ['weapon', 'armor', 'potion', 'ring', 'scroll', 'wondrous item'],
-
-    'cleric': ['weapon', 'armor', 'potion', 'ring', 'scroll', 'rod', 'staff', 'wondrous item'],
-    'druid': ['weapon', 'armor', 'potion', 'ring', 'scroll', 'staff', 'wondrous item'],
-    'bard': ['weapon', 'armor', 'potion', 'ring', 'scroll', 'wand', 'staff', 'wondrous item'],
-
-    'wizard': ['potion', 'ring', 'scroll', 'wand', 'staff', 'rod', 'wondrous item'],
-    'sorcerer': ['potion', 'ring', 'scroll', 'wand', 'staff', 'rod', 'wondrous item'],
-    'warlock': ['weapon', 'potion', 'ring', 'scroll', 'wand', 'staff', 'rod', 'wondrous item'],
-
-    'artificer': ['weapon', 'armor', 'potion', 'ring', 'scroll', 'wand', 'staff', 'rod', 'wondrous item']
-}
-
-    def forward(self, x):
-        return self.network(x)
+from models import DnDItemRanker, CLASS_SYNERGY, get_type_ohe
 
 # ==========================================
-# 2. ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+# 1. ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 # ==========================================
 def get_rarity_val(rarity_str, expected_rarity=3):
     """
@@ -94,7 +69,7 @@ def get_expected_rarity_for_level(level):
         return 5
 
 # ==========================================
-# 3. ФИНАЛЬНЫЙ РАНДОМАЙЗЕР (ИГРОВАЯ ЛОГИКА)
+# 2. ФИНАЛЬНЫЙ РАНДОМАЙЗЕР (ИГРОВАЯ ЛОГИКА)
 # ==========================================
 def roll_final_loot(valid_items, party_level):
     print("\n🎲 Бросаем виртуальные кубики...")
@@ -134,7 +109,7 @@ def roll_final_loot(valid_items, party_level):
 
 
 # ==========================================
-# 4. ГЛАВНЫЙ КЛАСС СИСТЕМЫ
+# 3. ГЛАВНЫЙ КЛАСС СИСТЕМЫ
 # ==========================================
 class SmartLootGenerator:
     def __init__(self):
@@ -301,7 +276,7 @@ class SmartLootGenerator:
 
 
 # ==========================================
-# 5. ИНТЕРАКТИВНЫЙ ИНТЕРФЕЙС
+# 4. ИНТЕРАКТИВНЫЙ ИНТЕРФЕЙС
 # ==========================================
 if __name__ == "__main__":
     print("\n" + "=" * 55)

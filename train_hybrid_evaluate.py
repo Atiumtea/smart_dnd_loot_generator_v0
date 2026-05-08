@@ -20,10 +20,6 @@ plt.rcParams['figure.figsize'] = (10, 6)
 # ==========================================
 # 1. ДАТАСЕТ
 # ==========================================
-
-    def forward(self, x):
-        return self.network(x)
-
 class DnDDataset(Dataset):
     def __init__(self, X, y):
         self.X = torch.tensor(X, dtype=torch.float32)
@@ -41,6 +37,7 @@ class DnDDataset(Dataset):
 def load_hybrid_data():
     print("📦 Загрузка синтетической базы...")
     synth_df = pd.read_csv('dnd_mlp_training_data.csv', sep=';')
+    synth_df['is_manual'] = 0  # Добавляем флаг синтетики
 
     try:
         print("🧑‍🏫 Поиск ручной разметки Мастера...")
@@ -51,25 +48,18 @@ def load_hybrid_data():
             return synth_df
 
         print(f"✨ Найдено {len(gold_df)} эталонных оценок. Начинаем интеграцию...")
+        gold_df['is_manual'] = 1  # Добавляем флаг ручной разметки
 
-        X = df[features].values
-        y = df['target_y'].values
-        is_manual = df[
-            'is_manual'].values
+        final_df = pd.concat([synth_df, gold_df], ignore_index=True)
 
-        copies = []
+        final_df = final_df.fillna(0.0)
 
-        gold_repeated = pd.concat(copies, ignore_index=True)
-
-        # Объединяем датасеты
-        final_df = pd.concat([synth_df, gold_repeated], ignore_index=True)
         print(f"📊 Итоговый гибридный датасет: {len(final_df)} примеров.")
         return final_df
 
     except FileNotFoundError:
         print("❌ Файл 'manual_gold_standard.csv' не найден! Учимся только на синтетике.")
         return synth_df
-
 
 # ==========================================
 # 3. ОСНОВНОЙ СКРИПТ ОБУЧЕНИЯ

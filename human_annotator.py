@@ -1,6 +1,7 @@
 import os
 import logging
 import warnings
+from models import ITEM_TYPES, CLASS_SYNERGY, get_type_ohe
 
 # 1. Глушим вывод на уровне системных переменных
 os.environ['TRANSFORMERS_VERBOSITY'] = 'error'
@@ -27,29 +28,8 @@ import re
 import textwrap
 from sentence_transformers import SentenceTransformer, util
 # ==========================================
-# 1. КОНСТАНТЫ И МАТРИЦЫ
+# 1. МАТРИЦЫ
 # ==========================================
-TYPE_MAP = {
-    'weapon': 0.1, 'armor': 0.2, 'potion': 0.3, 'ring': 0.4,
-    'scroll': 0.5, 'wand': 0.6, 'staff': 0.7, 'rod': 0.8, 'wondrous item': 0.9,
-}
-
-CLASS_SYNERGY = {
-    'barbarian': ['weapon', 'potion', 'ring', 'wondrous item'],
-    'monk': ['weapon', 'potion', 'ring', 'wondrous item'],
-    'fighter': ['weapon', 'armor', 'potion', 'ring', 'wondrous item'],
-    'rogue': ['weapon', 'armor', 'potion', 'ring', 'wondrous item'],
-    'paladin': ['weapon', 'armor', 'potion', 'ring', 'scroll', 'wondrous item'],
-    'ranger': ['weapon', 'armor', 'potion', 'ring', 'scroll', 'wondrous item'],
-    'cleric': ['weapon', 'armor', 'potion', 'ring', 'scroll', 'rod', 'staff', 'wondrous item'],
-    'druid': ['weapon', 'armor', 'potion', 'ring', 'scroll', 'staff', 'wondrous item'],
-    'bard': ['weapon', 'armor', 'potion', 'ring', 'scroll', 'wand', 'staff', 'wondrous item'],
-    'wizard': ['potion', 'ring', 'scroll', 'wand', 'staff', 'rod', 'wondrous item'],
-    'sorcerer': ['potion', 'ring', 'scroll', 'wand', 'staff', 'rod', 'wondrous item'],
-    'warlock': ['weapon', 'potion', 'ring', 'scroll', 'wand', 'staff', 'rod', 'wondrous item'],
-    'artificer': ['weapon', 'armor', 'potion', 'ring', 'scroll', 'wand', 'staff', 'rod', 'wondrous item']
-}
-
 TERRAIN = [
     "dark crypt", "abandoned mine", "city slums", "sewers network",
     "noble estate", "wizard tower", "ancient forest", "frozen tundra",
@@ -145,13 +125,14 @@ kb = pd.read_pickle('dnd_knowledge_base.pkl')
 kb_emb = torch.tensor(np.stack(kb['embedding'].values))
 
 GOLD_FILE = 'manual_gold_standard.csv'
-# Создаем заголовки для 7 признаков + метаданные
-cols = [
+
+base_cols = [
     'item_name', 'location_text', 'party_text',
     'loc_score', 'party_score', 'story_importance',
-    'level_rarity_delta', 'is_duplicate', 'type_id',
-    'synergy_flag', 'target_y'
+    'level_rarity_delta', 'is_duplicate', 'synergy_flag', 'target_y'
 ]
+type_cols = [f'type_{t.replace(" ", "_")}' for t in ITEM_TYPES]
+cols = base_cols + type_cols
 
 if not os.path.exists(GOLD_FILE):
     pd.DataFrame(columns=cols).to_csv(GOLD_FILE, index=False, sep=';')
@@ -227,11 +208,17 @@ while True:
     delta = get_rarity_val(item['rarity'], exp_r) - exp_r
     is_dup = 0  # В разметчике по умолчанию не дубликат
 
-    # Определяем type_id
+    # Определяем OHE типа (заменяет старый type_id)
     i_type = str(item.get('type', 'wondrous item')).lower()
-    t_id = 0.9
-    for k, v in TYPE_MAP.items():
-        if k in i_type: t_id = v; break
+    type_ohe = get_type_ohe(i_type)
+
+    # Определяем synergy_flag
+    syn = 0.0
+    p_low = scen['party'].lower()
+    for cls, allowed in CLASS_SYNERGY.items():
+        if cls in p_low and any(at in i_type for at in allowed):
+            syn = 1.0
+            break
 
     # Определяем synergy_flag
     syn = 0.0
@@ -306,12 +293,16 @@ while True:
         # 1 -> 0.0 | 5 -> 0.44 | 8 -> 0.77 | 10 -> 1.0
         target_y = round((int(ans) - 1) / 9.0, 4)
 
-        row = pd.DataFrame([{
+        row_dict = {
             'item_name': item['name'], 'location_text': scen['loc'], 'party_text': scen['party'],
             'loc_score': l_s, 'party_score': p_s, 'story_importance': scen['imp'],
-            'level_rarity_delta': delta, 'is_duplicate': is_dup, 'type_id': t_id,
-            'synergy_flag': syn, 'target_y': target_y
-        }])
+            'level_rarity_delta': delta, 'is_duplicate': is_dup, 'synergy_flag': syn, 'target_y': target_y
+        }
 
+        # Добавляем OHE колонки
+        for i, t in enumerate(ITEM_TYPES):
+            row_dict[f'type_{t.replace(" ", "_")}'] = type_ohe[i]
+
+        row = pd.DataFrame([row_dict])
         row.to_csv(GOLD_FILE, mode='a', header=False, index=False, sep=';')
         print(f"✅ Данные занесены (Твоя оценка: {ans}/10 -> Нейросеть увидит: {target_y})")

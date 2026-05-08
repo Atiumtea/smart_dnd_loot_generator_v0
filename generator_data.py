@@ -13,7 +13,7 @@ def smooth_normalize(score, midpoint=0.25, steepness=15):
     return 1 / (1 + math.exp(-steepness * (score - midpoint)))
 
 
-def calculate_target_y(location_score, party_score, story_importance, level_rarity_delta, is_duplicate,
+def calculate_target_y(location_score, party_score, story_importance, level_rarity_delta,
                        synergy_flag):
     # 1. Плавная нелинейная нормализация
     norm_loc = smooth_normalize(location_score)
@@ -38,9 +38,6 @@ def calculate_target_y(location_score, party_score, story_importance, level_rari
     elif level_rarity_delta < -1:
         y *= max(0.2, 1.0 - (abs(level_rarity_delta) * 0.2 * story_importance))
 
-    # 6. Дубликаты
-    if is_duplicate == 1:
-        y *= 0.1
 
     y += random.gauss(0, 0.03)  # Легкий шум
     return float(round(np.clip(y, 0.0, 1.0), 4))
@@ -68,7 +65,7 @@ def generate_dnd_dataset(num_samples=25000):
         # Собираем базовые фичи
         row = {
             'loc_score': loc_s, 'party_score': par_s, 'story_importance': imp,
-            'level_rarity_delta': delta, 'is_duplicate': is_dup,
+            'level_rarity_delta': delta,
             'synergy_flag': syn, 'target_y': target
         }
 
