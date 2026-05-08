@@ -5,11 +5,6 @@ import math
 from models import ITEM_TYPES, get_type_ohe
 
 def smooth_normalize(score, midpoint=0.25, steepness=15):
-    """
-    Плавная нормализация через Сигмоиду.
-    midpoint=0.25 - центр кривой (среднее значение наших векторов).
-    steepness=15 - крутизна S-кривой (настроена так, чтобы 0.45 давало ~0.95).
-    """
     return 1 / (1 + math.exp(-steepness * (score - midpoint)))
 
 
@@ -49,8 +44,14 @@ def generate_dnd_dataset(num_samples=25000):
     data = []
 
     for _ in range(num_samples):
-        loc_s = round(np.clip(random.gauss(0.25, 0.08), 0.0, 1.0), 4)
-        par_s = round(np.clip(random.gauss(0.25, 0.08), 0.0, 1.0), 4)
+        # С вероятностью 70% генерируем обычные/средние совпадения (Гаусс),
+        # с вероятностью 30% - случайные по всему спектру, включая идеальные (Uniform)
+        if random.random() < 0.7:
+            loc_s = round(np.clip(random.gauss(0.3, 0.15), 0.0, 1.0), 4)
+            par_s = round(np.clip(random.gauss(0.3, 0.15), 0.0, 1.0), 4)
+        else:
+            loc_s = round(random.uniform(0.0, 1.0), 4)
+            par_s = round(random.uniform(0.0, 1.0), 4)
         imp = round(random.uniform(0.0, 1.0), 4)
         delta = random.randint(-4, 4)
         is_dup = 1.0 if random.random() < 0.05 else 0.0

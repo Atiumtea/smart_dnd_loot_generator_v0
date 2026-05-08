@@ -1,16 +1,25 @@
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 import pandas as pd
 from tqdm import tqdm
 import time
 
+def create_resilient_session():
+    """Создает сессию, которая не падает при обрывах связи"""
+    session = requests.Session()
+    retries = Retry(total=5, backoff_factor=1, status_forcelist=[ 502, 503, 504, 429 ])
+    session.mount('https://', HTTPAdapter(max_retries=retries))
+    return session
 
 def fetch_all_items_except_2024():
     base_url = "https://api.open5e.com/v1/magicitems/"
     params = {'limit': 100}
     all_items = []
+    session = create_resilient_session()
 
     try:
-        response = requests.get(base_url, params=params)
+        response = session.get(base_url, params=params, timeout=10)
         response.raise_for_status()
         data = response.json()
         total_in_api = data.get('count', 0)
@@ -21,12 +30,11 @@ def fetch_all_items_except_2024():
         next_url = response.url
 
         while next_url:
-            res = requests.get(next_url)
+            res = session.get(next_url, timeout=10)
             res.raise_for_status()
             page_data = res.json()
 
             for item in page_data.get('results', []):
-                # Забираем всё подряд, отфильтруем потом
                 all_items.append({
                     'name': item.get('name', ''),
                     'type': item.get('type', ''),
@@ -56,35 +64,27 @@ if __name__ == "__main__":
     if not df.empty:
         initial_count = len(df)
 
-        # 1. Жесткая фильтрация 2024 года (по слагу и по названию источника)
-        df = df[~df['document_slug'].str.contains('2024', na=False, case=False)]
-        df = df[~df['source'].str.contains('2024', na=False, case=False)]
+        # ИСХОДНИК ИСПРАВЛЕН: Точечное удаление вместо ковровой бомбардировки
+        # Удаляем только конкретные слаги 2024 года, чтобы не задеть нормальные предметы
+        banned_slugs = ['dnd-2024-core', 'free-rules-2024']
+        df = df[~df['document_slug'].isin(banned_slugs)]
 
-        # 2. Очистка от дубликатов (если имя и описание совпадают — это дубль)
+        # Очистка от дубликатов
         df = df.drop_duplicates(subset=['name', 'description'], keep='first')
 
-        # 3. Причесываем текст (убираем переносы строк для Excel и нейросети)
         for col in ['description', 'name']:
             df[col] = df[col].str.replace(r'\r+|\n+', ' ', regex=True).str.strip()
 
-        # 4. Собираем итоговую строку текста для анализа
-        df['full_text'] = df['name'] + " (" + df['type'] + "): " + df['description']
+        # ИСХОДНИК ИСПРАВЛЕН: Структурированный промпт для нейросети
+        # SentenceTransformers гораздо лучше понимает структуру "Ключ: Значение"
+        df['full_text'] = "Item Name: " + df['name'] + ". Type: " + df['type'] + ". Description: " + df['description']
 
-        # Сохраняем в файл
         output_file = "dnd_items_final_clean.csv"
         df.to_csv(output_file, index=False, encoding='utf-8-sig', sep=';')
 
-        # ВЫВОД СТАТИСТИКИ
         print(f"\n--- ИТОГОВЫЙ ОТЧЕТ ---")
-        print(f"Было скачано (до фильтров и дублей): {initial_count}")
-        print(f"Осталось чистых уникальных предметов: {len(df)}")
-        print(f"Удалено (2024 год + дубликаты): {initial_count - len(df)}")
-
-        print(f"\nРеальные уникальные источники (Slugs):")
-        unique_slugs = df['document_slug'].unique()
-        for slug in sorted(unique_slugs):
-            count = len(df[df['document_slug'] == slug])
-            print(f"- {slug}: {count} предметов")
+        print(f"Было скачано: {initial_count}")
+        print(f"Осталось: {len(df)}")
+        print(f"Удалено: {initial_count - len(df)}")
     else:
         print("Датафрейм пуст. Что-то пошло не так при скачивании.")
-    

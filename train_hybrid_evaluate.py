@@ -86,14 +86,15 @@ def train_and_evaluate():
     type_features = [f'type_{t.replace(" ", "_")}' for t in ITEM_TYPES]
     features = base_features + type_features
 
+    for col in features + ['target_y']:
+        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
 
-    X = df[features].values
-    y = df['target_y'].values
-    is_manual = df[
-        'is_manual'].values
+    X = df[features].values.astype(np.float32)
+    y = df['target_y'].values.astype(np.float32)
+    is_manual = df['is_manual'].values.astype(int)
 
     X_train, X_test, y_train, y_test, is_man_train, _ = train_test_split(
-        X, y, is_manual, test_size=0.15, random_state=42
+        X, y, is_manual, test_size=0.15, random_state=42, stratify=is_manual
     )
 
     manual_indices = np.where(is_man_train == 1)[0]
@@ -102,12 +103,17 @@ def train_and_evaluate():
         X_manual = X_train[manual_indices]
         y_manual = y_train[manual_indices]
 
-        X_train = np.vstack([X_train] + [X_manual] * 50)
-
+        # ИСХОДНИК ИСПРАВЛЕН: Шум добавляется в ПРИЗНАКИ (X), а не в таргет (y) (Шаг 3)
+        # Таргет (оценку Мастера) оставляем неизменным!
         y_repeated = np.concatenate([y_manual] * 50)
-        noise = np.random.normal(0, 0.015, size=len(y_repeated))
-        y_repeated = np.clip(y_repeated + noise, 0.0, 1.0)
         y_train = np.concatenate([y_train, y_repeated])
+
+        # Размножаем признаки и добавляем к ним случайный Гауссовский шум
+        X_repeated = np.vstack([X_manual] * 50)
+        noise = np.random.normal(0, 0.02, size=X_repeated.shape)
+        X_repeated = X_repeated + noise
+
+        X_train = np.vstack([X_train, X_repeated])
 
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
@@ -120,7 +126,10 @@ def train_and_evaluate():
     test_loader = DataLoader(DnDDataset(X_test_scaled, y_test), batch_size=128, shuffle=False)
 
     model = DnDItemRanker(input_size=15)
-    criterion = nn.MSELoss()
+
+    # ИСХОДНИК ИСПРАВЛЕН: MSE заменен на BCELoss для Сигмоиды (Шаг 4)
+    # Для таргетов в диапазоне [0.0, 1.0] бинарная кросс-энтропия работает эффективнее
+    criterion = nn.BCELoss()
     optimizer = optim.Adam(model.parameters(), lr=0.003)
 
     epochs = 40
@@ -153,7 +162,8 @@ def train_and_evaluate():
         test_losses.append(epoch_test_loss)
 
         if (epoch + 1) % 5 == 0:
-            print(f"Эпоха [{epoch + 1}/{epochs}] | Train MSE: {epoch_train_loss:.4f} | Test MSE: {epoch_test_loss:.4f}")
+            print(
+                f"Эпоха [{epoch + 1}/{epochs}] | Train Loss: {epoch_train_loss:.4f} | Test Loss: {epoch_test_loss:.4f}")
 
     # Сохраняем гибрид в отдельный файл
     torch.save(model.state_dict(), 'dnd_hybrid_weights.pth')
@@ -180,11 +190,11 @@ def train_and_evaluate():
     os.makedirs("hybrid_report_plots", exist_ok=True)
 
     plt.figure()
-    plt.plot(range(1, epochs + 1), train_losses, label='Train Loss', color='blue')
-    plt.plot(range(1, epochs + 1), test_losses, label='Test Loss', color='red', linestyle='--')
+    plt.plot(range(1, epochs + 1), train_losses, label='Train Loss (BCE)', color='blue')
+    plt.plot(range(1, epochs + 1), test_losses, label='Test Loss (BCE)', color='red', linestyle='--')
     plt.title('Гибридная Кривая Обучения', fontsize=14, fontweight='bold')
     plt.xlabel('Эпохи')
-    plt.ylabel('MSE Loss')
+    plt.ylabel('Loss')
     plt.legend()
     plt.savefig('hybrid_report_plots/1_hybrid_learning_curve.png', dpi=300)
     plt.close()
@@ -193,20 +203,19 @@ def train_and_evaluate():
     plt.scatter(y_test, y_pred, alpha=0.3, color='green', s=10)
     plt.plot([0, 1], [0, 1], color='red', linestyle='--', linewidth=2)
     plt.title('Гибрид: Предсказания vs Смешанная Реальность', fontsize=14, fontweight='bold')
-    plt.xlabel('Реальный Target Y (Синтетика + Человек)')
+    plt.xlabel('Реальный Target Y')
     plt.ylabel('Предсказание Модели')
     plt.savefig('hybrid_report_plots/2_hybrid_predictions.png', dpi=300)
     plt.close()
 
     plt.figure()
     sns.histplot(y_pred, bins=50, kde=True, color='purple', stat="density", label='Предсказания Гибрида')
-    sns.histplot(y_test, bins=50, kde=True, color='orange', stat="density", alpha=0.4, label='Данные')
-    plt.title('Смещение распределения после вмешательства человека', fontsize=14, fontweight='bold')
+    sns.histplot(y_test, bins=50, kde=True, color='orange', stat="density", alpha=0.4, label='Реальные данные')
+    plt.title('Распределение предсказаний vs реальность', fontsize=14, fontweight='bold')
     plt.xlabel('Скор (Probability)')
     plt.legend()
     plt.savefig('hybrid_report_plots/3_hybrid_distribution.png', dpi=300)
     plt.close()
-
 
 if __name__ == "__main__":
     train_and_evaluate()

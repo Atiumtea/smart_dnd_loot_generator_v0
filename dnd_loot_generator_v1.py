@@ -121,32 +121,26 @@ class SmartLootGenerator:
 
         self.kb_embeddings = torch.tensor(np.stack(self.kb['embedding'].values))
 
-        # Загружаем ОБА скейлера
         try:
-            with open('scaler_synthetic.pkl', 'rb') as f:
-                self.scaler_synthetic = pickle.load(f)
             with open('scaler_hybrid.pkl', 'rb') as f:
-                self.scaler_hybrid = pickle.load(f)
+                self.current_scaler = pickle.load(f)
         except FileNotFoundError:
-            print("⚠️ Ошибка: Не найдены файлы скейлеров! Запусти скрипты обучения заново.")
+            print("⚠️ Ошибка: Файл 'scaler_hybrid.pkl' не найден! Сначала запусти train_hybrid_evaluate.py")
+            exit()  # Прерываем работу, если скейлера нет
 
         self.model = DnDItemRanker(input_size=15)
+        self.current_model_name = "Гибридная модель (Синтетика + Разметка)"
 
-        # Настройки путей к весам
-        self.synthetic_weights = 'dnd_ranker_weights.pth'
-        self.hybrid_weights = 'dnd_hybrid_weights.pth'
-
-        # Устанавливаем дефолтное состояние (Синтетика)
-        self.current_model_name = "Синтетика (Чистая математика)"
-        self.current_scaler = self.scaler_synthetic
-        self.load_model(self.synthetic_weights)
+        # Сразу загружаем веса
+        self.load_model('dnd_hybrid_weights.pth')
 
     def load_model(self, path):
         try:
             self.model.load_state_dict(torch.load(path, weights_only=True))
             self.model.eval()
         except FileNotFoundError:
-            print(f"\n⚠️ Файл {path} не найден! Убедитесь, что обучили эту модель.")
+            print(f"\n⚠️ Ошибка: Файл {path} не найден! Убедитесь, что обучили модель.")
+            exit()  # Прерываем работу, если весов нет
 
     def switch_model(self):
         # Определяем, на что переключаться
@@ -173,15 +167,15 @@ class SmartLootGenerator:
             print(f"⚠️ Ошибка: Файл {target_path} не найден! Сначала запусти соответствующий скрипт обучения.")
 
     def generate_loot(self, location_text, party_text, party_level, story_importance, party_inventory=[]):
-        # --- ЭТАП 1: ДВОЙНОЙ ВЕКТОРНЫЙ ПОИСК (Recall) ---
-        # Кодируем оба запроса
-        loc_emb = self.encoder.encode(location_text, convert_to_tensor=True)
-        loc_scores = util.cos_sim(loc_emb, self.kb_embeddings)[0]
 
-        party_emb = self.encoder.encode(party_text, convert_to_tensor=True)
-        party_scores = util.cos_sim(party_emb, self.kb_embeddings)[0]
+        with torch.no_grad():
+            # --- ЭТАП 1: ДВОЙНОЙ ВЕКТОРНЫЙ ПОИСК (Recall) ---
+            loc_emb = self.encoder.encode(location_text, convert_to_tensor=True)
+            loc_scores = util.cos_sim(loc_emb, self.kb_embeddings)[0]
 
-        # Для первичного отбора 50 кандидатов используем среднее
+            party_emb = self.encoder.encode(party_text, convert_to_tensor=True)
+            party_scores = util.cos_sim(party_emb, self.kb_embeddings)[0]
+
         combined_recall_scores = (loc_scores + party_scores) / 2.0
         top_50_indices = torch.topk(combined_recall_scores, k=50).indices.tolist()
 
@@ -198,11 +192,9 @@ class SmartLootGenerator:
             delta = get_rarity_val(item['rarity'], expected_rarity) - expected_rarity
             is_duplicate = 1.0 if str(item['name']).lower() in [i.lower() for i in party_inventory] else 0.0
 
-            # 3. КАТЕГОРИЯ ПРЕДМЕТА (One-Hot Encoding)
             item_type_str = str(item.get('type', 'wondrous item')).lower()
             type_ohe_list = get_type_ohe(item_type_str)
 
-            # 4. СТРОГАЯ СИНЕРГИЯ
             synergy_flag = 0.0
             party_lower = party_text.lower()
             for cls, allowed_types in CLASS_SYNERGY.items():
@@ -211,7 +203,6 @@ class SmartLootGenerator:
                         synergy_flag = 1.0
                         break
 
-            # ФОРМИРУЕМ НОВЫЙ ВЕКТОР (6 базовых + 9 OHE = 15 признаков)
             feature_vector = [
                                  l_score, p_score, story_importance, delta, is_duplicate, synergy_flag
                              ] + type_ohe_list
@@ -226,7 +217,6 @@ class SmartLootGenerator:
             candidates.append(item_dict)
 
         # --- ЭТАП 3: MLP ПРЕДСКАЗАНИЕ ---
-        # Теперь X_raw будет иметь shape (50, 15)
         X_raw = np.array(features_list)
         X_scaled = self.current_scaler.transform(X_raw)
         X_tensor = torch.tensor(X_scaled, dtype=torch.float32)
@@ -234,24 +224,18 @@ class SmartLootGenerator:
         with torch.no_grad():
             predictions = self.model(X_tensor).numpy().flatten()
 
-        # Привязываем скоры ко всем кандидатам
         for i, item in enumerate(candidates):
             item['final_score'] = float(predictions[i])
 
-        # Сортируем ВЕСЬ список до фильтрации, чтобы увидеть лидеров
         candidates.sort(key=lambda x: x['final_score'], reverse=True)
 
-        # ==========================================
-        # 🛠️ РАСШИРЕННЫЙ ДЕБАГ-ВЫВОД
-        # ==========================================
+        # Дебаг-вывод оставляем без изменений
         print("\n" + "=" * 50)
         print(" 🛠️ DEBUG: ТОП-3 ПРЕДМЕТА ГЛАЗАМИ НЕЙРОСЕТИ")
         print("=" * 50)
         for i in range(min(3, len(candidates))):
             c = candidates[i]
-            # Визуальный маркер: прошел предмет порог 0.36 или нет
             status = "✅ ПРОШЕЛ" if c['final_score'] >= 0.36 else "❌ ОТКЛОНЕН"
-
             print(f"{i + 1}. {c['name']} ({c['rarity']}) -> {status}")
             print(f"   📊 Итоговый MLP Score: {c['final_score']:.3f}")
             print(f"   ├─ Локация: {c['loc_score']:.3f}")
@@ -262,14 +246,14 @@ class SmartLootGenerator:
 
         # --- ЭТАП 4: ПОДГОТОВКА ВАЛИДНОГО ПУЛА ---
         valid_candidates = []
-        for i, item in enumerate(candidates):
-            item['final_score'] = float(predictions[i])
-
-            # Оставляем только те предметы, которые прошли порог 0.36
+        for item in candidates:
             if item['final_score'] >= 0.36:
+                # ИСХОДНИК ИСПРАВЛЕН: Возводим скор в 3 степень для "эффекта доминирования" лучших предметов
+                # 0.9^3 = 0.729 (очень много шансов)
+                # 0.4^3 = 0.064 (почти нет шансов)
+                item['final_score'] = item['final_score'] ** 3
                 valid_candidates.append(item)
 
-        # Сортируем по убыванию вероятности
         valid_candidates.sort(key=lambda x: x['final_score'], reverse=True)
 
         return valid_candidates
