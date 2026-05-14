@@ -2,11 +2,9 @@ import os
 import logging
 import warnings
 
-# 1. Глушим вывод на уровне системных переменных
 os.environ['TRANSFORMERS_VERBOSITY'] = 'error'
 os.environ['SAFETENSORS_FAST_GPU'] = '1'
 
-# 2. Глушим вывод на уровне Python-логгеров
 logging.getLogger("transformers.modeling_utils").setLevel(logging.ERROR)
 logging.getLogger("sentence_transformers").setLevel(logging.ERROR)
 warnings.filterwarnings("ignore")
@@ -22,10 +20,6 @@ import chromadb
 from sentence_transformers import SentenceTransformer, util
 from models import DnDItemRanker, CLASS_SYNERGY, get_type_ohe
 
-
-# ==========================================
-# 1. ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
-# ==========================================
 def get_rarity_val(rarity_str, expected_rarity=3):
     r = str(rarity_str).lower()
     if 'varies' in r:
@@ -47,7 +41,6 @@ def get_rarity_val(rarity_str, expected_rarity=3):
     best_rarity = min(found_rarities, key=lambda x: abs(x - expected_rarity))
     return best_rarity
 
-
 def get_expected_rarity_for_level(level):
     if level <= 4:
         return 2
@@ -57,7 +50,6 @@ def get_expected_rarity_for_level(level):
         return 4
     else:
         return 5
-
 
 def roll_final_loot(valid_items, party_level):
     print("\n🎲 Бросаем виртуальные кубики...")
@@ -69,7 +61,6 @@ def roll_final_loot(valid_items, party_level):
         gold_amount = random.randint(10, 50) * party_level
         return f"\n💰 Стоящего лута нет. Вы нашли мешочек с {gold_amount} зм."
 
-    # Взвешенный бросок (веса уже возведены в куб на этапе отбора)
     weights = [item['final_score'] for item in valid_items]
     chosen_item = random.choices(valid_items, weights=weights, k=1)[0]
     drop_chance = (chosen_item['final_score'] / sum(weights)) * 100
@@ -94,10 +85,6 @@ def roll_final_loot(valid_items, party_level):
     )
     return result
 
-
-# ==========================================
-# 2. ГЛАВНЫЙ КЛАСС СИСТЕМЫ
-# ==========================================
 class SmartLootGenerator:
     def __init__(self):
         print("Загрузка компонентов ИИ...")
@@ -119,7 +106,7 @@ class SmartLootGenerator:
             exit()
 
         self.model = DnDItemRanker(input_size=15)
-        self.current_model_name = "Гибридная модель (Синтетика + Разметка)"
+        self.current_model_name = "Гибридная регрессионная модель (Knowledge Distillation)"
         self.load_model('dnd_hybrid_weights.pth')
 
     def load_model(self, path):
@@ -135,7 +122,6 @@ class SmartLootGenerator:
             loc_emb = self.encoder.encode(location_text)
             party_emb = self.encoder.encode(party_text)
 
-        # --- ЭТАП 1: ШИРОКИЙ ЗАХВАТ В CHROMADB (Broad Recall) ---
         results = self.collection.query(
             query_embeddings=[loc_emb.tolist(), party_emb.tolist()],
             n_results=400,
@@ -154,7 +140,6 @@ class SmartLootGenerator:
                         'embedding': results['embeddings'][q_idx][i]
                     }
 
-        # --- ЭТАП 2: СБОРКА ПРИЗНАКОВ И БАЗОВАЯ ФИЛЬТРАЦИЯ ---
         candidates_embs = torch.tensor([c['embedding'] for c in unique_candidates.values()], dtype=torch.float32)
         loc_emb_tensor = torch.tensor(loc_emb, dtype=torch.float32)
         party_emb_tensor = torch.tensor(party_emb, dtype=torch.float32)
@@ -199,7 +184,6 @@ class SmartLootGenerator:
         if not candidates:
             return []
 
-        # --- ЭТАП 3: MLP ПРЕДСКАЗАНИЕ ---
         X_raw = np.array(features_list)
         X_scaled = self.current_scaler.transform(X_raw)
         X_tensor = torch.tensor(X_scaled, dtype=torch.float32)
@@ -213,33 +197,29 @@ class SmartLootGenerator:
         candidates.sort(key=lambda x: x['final_score'], reverse=True)
 
         print("\n" + "=" * 50)
-        print(" 🛠️ DEBUG: ТОП-3 ПРЕДМЕТА ГЛАЗАМИ НЕЙРОСЕТИ")
+        print(" 🛠️ DEBUG: ТОП-3 ПРЕДМЕТА ГЛАЗАМИ ИИ")
         print("=" * 50)
         for i in range(min(3, len(candidates))):
             c = candidates[i]
-            status = "✅ ПРОШЕЛ" if c['final_score'] >= 0.36 else "❌ ОТКЛОНЕН"
+            # Порог снижен до 0.30 из-за особенностей распределения MSELoss
+            status = "✅ ПРОШЕЛ" if c['final_score'] >= 0.30 else "❌ ОТКЛОНЕН"
             print(f"{i + 1}. {c['name']} ({c['rarity']}) -> {status}")
-            print(f"   📊 Итоговый MLP Score: {c['final_score']:.3f}")
+            print(f"   📊 Итоговый Regression Score: {c['final_score']:.3f}")
             print(f"   ├─ Локация: {c['loc_score']:.3f}")
             print(f"   ├─ Партия:  {c['party_score']:.3f}")
             print(f"   └─ Дельта:  {c['delta']}")
             print("-" * 50)
         print("=" * 50 + "\n")
 
-        # --- ЭТАП 4: ФИНАЛЬНАЯ ПОДГОТОВКА ПУЛА ---
         valid_candidates = []
         for item in candidates:
-            if item['final_score'] >= 0.36:
+            if item['final_score'] >= 0.30:
                 item['final_score'] = item['final_score'] ** 3
                 valid_candidates.append(item)
 
         valid_candidates.sort(key=lambda x: x['final_score'], reverse=True)
         return valid_candidates
 
-
-# ==========================================
-# 3. ИНТЕРАКТИВНЫЙ ИНТЕРФЕЙС
-# ==========================================
 if __name__ == "__main__":
     print("\n" + "=" * 55)
     print(" 🐉 УМНЫЙ ГЕНЕРАТОР ЛУТА D&D 5e")
