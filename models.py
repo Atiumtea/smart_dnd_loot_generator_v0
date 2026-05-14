@@ -1,8 +1,146 @@
+# models.py
 import torch.nn as nn
 import numpy as np
 import re
 
-# === МАССИВЫ ДЛЯ ГЕНЕРАЦИИ ПРИМЕРОВ ЛОКАЦИЙ ===
+# ==========================================
+# 1. КОНСТАНТЫ И СИНЕРГИЯ (МЕХАНИКА)
+# ==========================================
+ITEM_TYPES = [
+    'weapon', 'armor', 'potion', 'ring', 'scroll',
+    'wand', 'staff', 'rod', 'wondrous item'
+]
+
+CLASS_SYNERGY = {
+    'barbarian': ['weapon', 'potion', 'ring', 'wondrous item'],
+    'monk': ['weapon', 'potion', 'ring', 'wondrous item'],
+    'fighter': ['weapon', 'armor', 'potion', 'ring', 'wondrous item'],
+    'rogue': ['weapon', 'armor', 'potion', 'ring', 'wondrous item'],
+    'paladin': ['weapon', 'armor', 'potion', 'ring', 'scroll', 'wondrous item'],
+    'ranger': ['weapon', 'armor', 'potion', 'ring', 'scroll', 'wondrous item'],
+    'cleric': ['weapon', 'armor', 'potion', 'ring', 'scroll', 'rod', 'staff', 'wondrous item'],
+    'druid': ['weapon', 'armor', 'potion', 'ring', 'scroll', 'staff', 'wondrous item'],
+    'bard': ['weapon', 'armor', 'potion', 'ring', 'scroll', 'wand', 'staff', 'wondrous item'],
+    'wizard': ['potion', 'ring', 'scroll', 'wand', 'staff', 'rod', 'wondrous item'],
+    'sorcerer': ['potion', 'ring', 'scroll', 'wand', 'staff', 'rod', 'wondrous item'],
+    'warlock': ['weapon', 'potion', 'ring', 'scroll', 'wand', 'staff', 'rod', 'wondrous item'],
+    'artificer': ['weapon', 'armor', 'potion', 'ring', 'scroll', 'wand', 'staff', 'rod', 'wondrous item']
+}
+
+# ==========================================
+# 2. СЕМАНТИЧЕСКИЙ ЛОР (РАСШИРЕНИЕ ЗАПРОСОВ)
+# ==========================================
+CLASS_LORE = {
+    "barbarian": {
+        "base": "ferocious warrior, rage, unarmored defense, heavy melee weapons, raw physical power.",
+        "subclasses": {
+            "berserker": "frenzied strikes, immune to fear, relentless attacker.",
+            "totem": "animal spirits, primal magic, bear resilience, eagle sight.",
+            "zealot": "divine fury, refuses to die, religious fanatic warrior."
+        }
+    },
+    "bard": {
+        "base": "magical entertainer, inspires allies, jack of all trades, spellcaster and musician.",
+        "subclasses": {
+            "lore": "collector of magical secrets, cutting words, vast magical knowledge.",
+            "valor": "skald, combat inspiration, medium armor and martial weapons.",
+            "glamour": "fey magic, charming, majestic presence, manipulative illusions."
+        }
+    },
+    "cleric": {
+        "base": "divine magic caster, healer, holy warrior, channels the power of deities.",
+        "subclasses": {
+            "life": "supreme healer, heavily armored medic, radiant energy, preserves life.",
+            "light": "blaster caster, holy fire, dispels darkness, burning radiance.",
+            "war": "frontline battle priest, heavily armored, guides weapon strikes with divine favor."
+        }
+    },
+    "druid": {
+        "base": "nature spellcaster, shapeshifter, wild shape, commands elements and beasts.",
+        "subclasses": {
+            "moon": "combat shapeshifter, transforms into dangerous beasts, frontline fighter.",
+            "land": "master of nature spells, recovers magic easily, bonded to specific terrains.",
+            "spores": "necromantic druid, fungal magic, poison, symbiotic entities."
+        }
+    },
+    "fighter": {
+        "base": "master of martial combat, skilled with all weapons and armors, battlefield tactician.",
+        "subclasses": {
+            "champion": "peak physical athlete, brutal critical strikes, raw strength.",
+            "battle master": "tactical commander, combat maneuvers, versatile weapon expert.",
+            "cavalier": "mounted warrior, heavily armored knight, protects allies, uses lances.",
+            "eldritch knight": "magical warrior, combines arcane spells with martial prowess."
+        }
+    },
+    "monk": {
+        "base": "martial artist, unarmored, uses ki energy, agile strikes, bare-handed combat.",
+        "subclasses": {
+            "open hand": "master of unarmed combat, trips and stuns opponents, self-healing.",
+            "shadow": "ninja, teleports through darkness, stealth and infiltration.",
+            "kensei": "weapon master, blends ki with swords and bows, elegant strikes."
+        }
+    },
+    "paladin": {
+        "base": "holy knight, divine smite, heavy armor, auras of protection, heals by touch.",
+        "subclasses": {
+            "devotion": "classic holy knight, glowing weapons, turns the unholy.",
+            "vengeance": "relentless avenger, hunts down foes, aggressive damage dealer.",
+            "ancients": "green knight, protects nature, wards against spell damage."
+        }
+    },
+    "ranger": {
+        "base": "wilderness survivor, tracker, uses bows and two-weapon fighting, nature magic.",
+        "subclasses": {
+            "hunter": "slayer of monsters, versatile combatant against hordes or giants.",
+            "beast master": "fights alongside a loyal animal companion.",
+            "gloom stalker": "creature of darkness, deadly first strikes, invisible in shadows."
+        }
+    },
+    "rogue": {
+        "base": "stealthy skirmisher, sneak attacks, skilled with lockpicks, avoids detection.",
+        "subclasses": {
+            "thief": "agile burglar, treasure hunter, climbs walls, disarms traps.",
+            "assassin": "deadly killer, poison expert, strikes from the shadows, surprise attacks.",
+            "arcane trickster": "magical thief, uses illusions and enchantments to steal and deceive."
+        }
+    },
+    "sorcerer": {
+        "base": "innate spellcaster, metamagic, manipulates spell effects, charismatic.",
+        "subclasses": {
+            "draconic": "dragon scales, elemental affinity, breathes fire or lightning.",
+            "wild magic": "unpredictable chaos, surges of random magic effects.",
+            "divine soul": "chosen by gods, combines cleric healing with sorcerer spells."
+        }
+    },
+    "warlock": {
+        "base": "pact magic, eldritch blast, granted power by otherworldly patrons, invocations.",
+        "subclasses": {
+            "fiend": "hellish power, commands fire, gains temporary health on kills.",
+            "archfey": "fey tricks, charming, teleporting, illusory defenses.",
+            "hexblade": "shadow magic warrior, curses foes, fights with conjured melee weapons."
+        }
+    },
+    "wizard": {
+        "base": "scholarly spellcaster, huge spellbook, rituals, master of arcane studies.",
+        "subclasses": {
+            "evocation": "destructive magic, fireballs, sculpts spells around allies.",
+            "abjuration": "protective magic, arcane wards, counterspells.",
+            "divination": "foresees the future, alters dice rolls, gathers distant intel."
+        }
+    },
+    "artificer": {
+        "base": "magical inventor, infuses items with magic, creates constructs and gadgets.",
+        "subclasses": {
+            "alchemist": "brews magical potions, heals allies, throws acid and fire.",
+            "armorer": "wears magical power armor, acts as an impenetrable tank.",
+            "battle smith": "fights with martial weapons, accompanied by a mechanical steel defender."
+        }
+    }
+}
+
+# ==========================================
+# 3. МАССИВЫ ДЛЯ ГЕНЕРАЦИИ ПРИМЕРОВ (UI)
+# ==========================================
 TERRAIN = [
     "dark crypt", "abandoned mine", "city slums", "sewers network",
     "noble estate", "wizard tower", "ancient forest", "frozen tundra",
@@ -33,28 +171,10 @@ ENEMY_ACTIONS = [
     "repairing their weapons", "hiding in the shadows", "worshipping an idol"
 ]
 
-ITEM_TYPES = [
-    'weapon', 'armor', 'potion', 'ring', 'scroll',
-    'wand', 'staff', 'rod', 'wondrous item'
-]
 
-CLASS_SYNERGY = {
-    'barbarian': ['weapon', 'potion', 'ring', 'wondrous item'],
-    'monk': ['weapon', 'potion', 'ring', 'wondrous item'],
-    'fighter': ['weapon', 'armor', 'potion', 'ring', 'wondrous item'],
-    'rogue': ['weapon', 'armor', 'potion', 'ring', 'wondrous item'],
-    'paladin': ['weapon', 'armor', 'potion', 'ring', 'scroll', 'wondrous item'],
-    'ranger': ['weapon', 'armor', 'potion', 'ring', 'scroll', 'wondrous item'],
-    'cleric': ['weapon', 'armor', 'potion', 'ring', 'scroll', 'rod', 'staff', 'wondrous item'],
-    'druid': ['weapon', 'armor', 'potion', 'ring', 'scroll', 'staff', 'wondrous item'],
-    'bard': ['weapon', 'armor', 'potion', 'ring', 'scroll', 'wand', 'staff', 'wondrous item'],
-    'wizard': ['potion', 'ring', 'scroll', 'wand', 'staff', 'rod', 'wondrous item'],
-    'sorcerer': ['potion', 'ring', 'scroll', 'wand', 'staff', 'rod', 'wondrous item'],
-    'warlock': ['weapon', 'potion', 'ring', 'scroll', 'wand', 'staff', 'rod', 'wondrous item'],
-    'artificer': ['weapon', 'armor', 'potion', 'ring', 'scroll', 'wand', 'staff', 'rod', 'wondrous item']
-}
-
-
+# ==========================================
+# 4. ВСПОМОГАТЕЛЬНАЯ ЛОГИКА
+# ==========================================
 def get_type_ohe(item_type_str: str) -> list:
     item_type_str = item_type_str.lower()
     ohe = [0.0] * len(ITEM_TYPES)
@@ -69,18 +189,44 @@ def get_type_ohe(item_type_str: str) -> list:
         ohe[-1] = 1.0
     return ohe
 
+
+def build_party_semantics(party_input_string: str) -> tuple[str, list[str]]:
+    """
+    Принимает строку вроде "Life Cleric, Assassin Rogue".
+    Возвращает кортеж: (обогащенный текст для эмбеддингов, список базовых классов для проверки синергии).
+    """
+    party_lower = party_input_string.lower()
+    enriched_parts = []
+    found_base_classes = []
+
+    for cls, lore in CLASS_LORE.items():
+        if cls in party_lower:
+            found_base_classes.append(cls)
+            enriched_parts.append(f"{cls}: {lore['base']}")
+
+            # Проверяем подклассы только для найденного класса
+            for sub, sub_desc in lore['subclasses'].items():
+                if sub in party_lower:
+                    enriched_parts.append(f"({sub} - {sub_desc})")
+
+    # Если парсер ничего не нашел (пользователь ввел что-то странное),
+    # возвращаем исходный текст, чтобы модель не упала
+    final_text = " ".join(enriched_parts) if enriched_parts else party_input_string
+    return final_text, found_base_classes
+
+
+# ==========================================
+# 5. АРХИТЕКТУРА НЕЙРОСЕТИ
+# ==========================================
 class DnDItemRanker(nn.Module):
     def __init__(self, input_size=15):
         super(DnDItemRanker, self).__init__()
-
         self.network = nn.Sequential(
             nn.Linear(input_size, 32),
             nn.ReLU(),
             nn.Dropout(0.1),
-
             nn.Linear(32, 16),
             nn.ReLU(),
-
             nn.Linear(16, 1),
             nn.Sigmoid()
         )
