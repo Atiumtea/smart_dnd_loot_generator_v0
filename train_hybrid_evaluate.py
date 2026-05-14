@@ -184,12 +184,21 @@ def train_and_evaluate(use_synthetic):
     mae = mean_absolute_error(y_test, y_pred)
     r2 = r2_score(y_test, y_pred)
 
+    threshold = 0.30
+    y_test_binary = (y_test >= threshold).astype(int)
+    y_pred_binary = (y_pred >= threshold).astype(int)
+
+    correct_predictions = np.sum(y_test_binary == y_pred_binary)
+    business_accuracy = correct_predictions / len(y_test_binary)
+
     print("\n" + "=" * 40)
     print(" 📊 МЕТРИКИ ДЛЯ ОТЧЕТА ")
     print("=" * 40)
     print(f"1. MSE: {mse:.4f}")
     print(f"2. MAE: {mae:.4f}")
     print(f"3. R²:  {r2:.4f}")
+    print("-" * 40)
+    print(f"🎯 Точность фильтрации (Pass/Fail >= {threshold}): {business_accuracy:.1%}")
     print("=" * 40)
 
     os.makedirs("hybrid_report_plots", exist_ok=True)
