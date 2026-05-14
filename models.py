@@ -230,3 +230,24 @@ class DnDItemRanker(nn.Module):
 
     def forward(self, x):
         return self.network(x)
+
+# ==========================================
+# 6. УТИЛИТЫ ДЛЯ РЕДКОСТИ
+# ==========================================
+def get_expected_rarity_for_level(level: int) -> int:
+    if level <= 4: return 2
+    elif level <= 10: return 3
+    elif level <= 16: return 4
+    else: return 5
+
+def get_rarity_val(rarity_str: str, expected_rarity: int = 3) -> int:
+    r = str(rarity_str).lower()
+    if 'varies' in r: return expected_rarity
+    found = []
+    if 'artifact' in r: found.append(6)
+    if 'legendary' in r: found.append(5)
+    if 'very rare' in r: found.append(4); r = r.replace('very rare', '')
+    if 'uncommon' in r: found.append(2); r = r.replace('uncommon', '')
+    if re.search(r'\brare\b', r): found.append(3)
+    if re.search(r'\bcommon\b', r): found.append(1)
+    return min(found, key=lambda x: abs(x - expected_rarity)) if found else 1

@@ -1,24 +1,11 @@
 import os
 import logging
 import warnings
-from models import ITEM_TYPES, CLASS_SYNERGY, get_type_ohe, CLASS_LORE, TERRAIN, ATMOSPHERE, ENEMY_FACTIONS, \
-    ENEMY_ACTIONS, build_party_semantics
-from generator_data import calculate_target_y
-
-os.environ['TRANSFORMERS_VERBOSITY'] = 'error'
-os.environ['SAFETENSORS_FAST_GPU'] = '1'
-
-logging.getLogger("transformers.modeling_utils").setLevel(logging.ERROR)
-logging.getLogger("sentence_transformers").setLevel(logging.ERROR)
-warnings.filterwarnings("ignore")
 
 from rich.console import Console, Group
 from rich.panel import Panel
 from rich.table import Table
 from rich.rule import Rule
-
-console = Console()
-
 import pandas as pd
 import numpy as np
 import random
@@ -26,11 +13,23 @@ import torch
 import re
 from sentence_transformers import SentenceTransformer, util
 
+from generator_data import calculate_target_y
+from models import (
+    ITEM_TYPES, CLASS_SYNERGY, get_type_ohe, CLASS_LORE, TERRAIN, ATMOSPHERE, ENEMY_FACTIONS, \
+    ENEMY_ACTIONS, build_party_semantics, get_rarity_val
+)
+
+os.environ['TRANSFORMERS_VERBOSITY'] = 'error'
+os.environ['SAFETENSORS_FAST_GPU'] = '1'
+logging.getLogger("transformers.modeling_utils").setLevel(logging.ERROR)
+logging.getLogger("sentence_transformers").setLevel(logging.ERROR)
+warnings.filterwarnings("ignore")
+
+console = Console()
 
 def generate_dynamic_scenario():
     loc = f"{random.choice(TERRAIN)}, {random.choice(ATMOSPHERE)}, {random.choice(ENEMY_FACTIONS)}, {random.choice(ENEMY_ACTIONS)}"
 
-    # 🌟 Генерируем партию с подклассами (напр. "Cavalier Fighter")
     party_size = random.randint(3, 5)
     party_members = []
     base_classes_list = list(CLASS_LORE.keys())
@@ -45,31 +44,6 @@ def generate_dynamic_scenario():
     imp = round(random.betavariate(2, 5), 2)
 
     return {"loc": loc, "party": party, "level": level, "imp": imp}
-
-
-def get_expected_rarity(level):
-    if level <= 4:
-        return 2
-    elif level <= 10:
-        return 3
-    elif level <= 16:
-        return 4
-    else:
-        return 5
-
-
-def get_rarity_val(rarity_str, expected_rarity=3):
-    r = str(rarity_str).lower()
-    if 'varies' in r: return expected_rarity
-    found = []
-    if 'artifact' in r: found.append(6)
-    if 'legendary' in r: found.append(5)
-    if 'very rare' in r: found.append(4); r = r.replace('very rare', '')
-    if 'uncommon' in r: found.append(2); r = r.replace('uncommon', '')
-    if re.search(r'\brare\b', r): found.append(3)
-    if re.search(r'\bcommon\b', r): found.append(1)
-    return min(found, key=lambda x: abs(x - expected_rarity)) if found else 1
-
 
 print("Загрузка ИИ-компонентов...")
 encoder = SentenceTransformer('all-MiniLM-L6-v2')

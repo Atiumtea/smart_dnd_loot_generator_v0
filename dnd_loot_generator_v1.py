@@ -13,7 +13,11 @@ import chromadb
 import chromadb.errors
 from sentence_transformers import SentenceTransformer, util
 
-from models import DnDItemRanker, CLASS_SYNERGY, get_type_ohe, TERRAIN, ATMOSPHERE, ENEMY_FACTIONS, ENEMY_ACTIONS, build_party_semantics, CLASS_LORE
+from models import (
+    DnDItemRanker, CLASS_SYNERGY, get_type_ohe, TERRAIN, ATMOSPHERE,
+    ENEMY_FACTIONS, ENEMY_ACTIONS, build_party_semantics, CLASS_LORE,
+    get_expected_rarity_for_level, get_rarity_val
+)
 
 os.environ['TRANSFORMERS_VERBOSITY'] = 'error'
 os.environ['SAFETENSORS_FAST_GPU'] = '1'
@@ -21,23 +25,6 @@ logging.getLogger("transformers.modeling_utils").setLevel(logging.ERROR)
 logging.getLogger("sentence_transformers").setLevel(logging.ERROR)
 warnings.filterwarnings("ignore")
 
-def get_rarity_val(rarity_str, expected_rarity=3):
-    r = str(rarity_str).lower()
-    if 'varies' in r: return expected_rarity
-    found = []
-    if 'artifact' in r: found.append(6)
-    if 'legendary' in r: found.append(5)
-    if 'very rare' in r: found.append(4); r = r.replace('very rare', '')
-    if 'uncommon' in r: found.append(2); r = r.replace('uncommon', '')
-    if re.search(r'\brare\b', r): found.append(3)
-    if re.search(r'\bcommon\b', r): found.append(1)
-    return min(found, key=lambda x: abs(x - expected_rarity)) if found else 1
-
-def get_expected_rarity_for_level(level):
-    if level <= 4: return 2
-    elif level <= 10: return 3
-    elif level <= 16: return 4
-    else: return 5
 
 def roll_final_loot(valid_items, party_level):
     print("\n🎲 Бросаем виртуальные кубики...")
