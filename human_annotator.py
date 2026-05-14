@@ -128,10 +128,10 @@ print("=" * 60)
 
 cheat_sheet = """
 [bold red]❌ КРИТИЧЕСКИЕ ШТРАФЫ (1 - 2 балла)[/bold red]
-• DELTA >= +3 (Слишком имбово для уровня, без исключений!)
-• DELTA == +2 при IMP < 0.8 (Не по статусу)
-• MAX(LOC, PTY) < 0.15 (Чужеродный лут)
-• SYNERGY == NO (Мусор для партии)
+• DELTA >= +2 
+• DELTA == +1 при IMP < 0.8
+• MAX(LOC, PTY) < 0.15 
+• SYNERGY == NO 
 
 [bold yellow]⚖️ НОРМАЛЬНЫЙ ЛУТ (3 - 6 баллов)[/bold yellow]
 • Расходники (Potion, Scroll)
@@ -140,7 +140,7 @@ cheat_sheet = """
 
 [bold green]🌟 ИДЕАЛЬНЫЙ ЛУТ (7 - 10 баллов)[/bold green]
 • Высокие скоры LOC/PTY (> 0.4) при DELTA == 0
-• DELTA == +1 при IMP > 0.6 (Заслуженная награда)
+• DELTA == +1 при IMP > 0.79
 """
 
 console.print(Panel(
