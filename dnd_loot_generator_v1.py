@@ -2,6 +2,12 @@ import os
 import logging
 import warnings
 
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich import box
+from rich.rule import Rule
+
 import torch
 import torch.nn as nn
 import pandas as pd
@@ -25,15 +31,29 @@ logging.getLogger("transformers.modeling_utils").setLevel(logging.ERROR)
 logging.getLogger("sentence_transformers").setLevel(logging.ERROR)
 warnings.filterwarnings("ignore")
 
+console = Console()
 
 def roll_final_loot(valid_items, party_level):
-    print("\n🎲 Бросаем виртуальные кубики...")
+    console.print("\n[bold cyan]🎲 Бросаем виртуальные кубики...[/bold cyan]")
+
     if random.random() < 0.05:
-        return "\n🎲 Выпала странная БЕЗДЕЛУШКА (бросьте d100 по таблице Trinkets)."
+        console.print(Panel(
+            "[bold white]Выпала странная БЕЗДЕЛУШКА[/bold white]\n[dim](бросьте d100 по таблице Trinkets в Книге Игрока).[/dim]",
+            title="[bold yellow]🎲 СЛУЧАЙНОСТЬ[/bold yellow]",
+            border_style="yellow",
+            expand=False
+        ))
+        return
 
     if not valid_items:
         gold_amount = random.randint(10, 50) * party_level
-        return f"\n💰 Стоящего лута нет. Вы нашли мешочек с {gold_amount} зм."
+        console.print(Panel(
+            f"[bold gold1]Стоящего лута нет.[/bold gold1]\nВы нашли мешочек с {gold_amount} зм.",
+            title="[bold yellow]💰 УТЕШИТЕЛЬНЫЙ ПРИЗ[/bold yellow]",
+            border_style="gold1",
+            expand=False
+        ))
+        return
 
     weights = [item['final_score'] for item in valid_items]
     chosen_item = random.choices(valid_items, weights=weights, k=1)[0]
@@ -46,44 +66,56 @@ def roll_final_loot(valid_items, party_level):
     elif loc_s > party_s + 0.1: reason = "Этот трофей выглядит очень уместно в данной локации."
     else: reason = "Сбалансированная находка, которая вписывается в окружение и полезна героям."
 
-    result = (
-        f"\n✨ НАГРАДА: {chosen_item['name']}\n"
-        f"   • Редкость: {chosen_item['rarity']}\n"
-        f"   • Тип: {chosen_item['type']}\n"
-        f"   • Шанс из пула: {drop_chance:.1f}%\n"
-        f"   💬 Комментарий: {reason}\n"
-        f"   • Описание: {str(chosen_item.get('description', ''))[:200]}..."
+    desc = str(chosen_item.get('description', '')).strip()
+
+    content = (
+        f"[bold cyan]Редкость:[/bold cyan] {chosen_item['rarity'].title()}\n"
+        f"[bold cyan]Тип:[/bold cyan] {chosen_item['type'].title()}\n"
+        f"[bold cyan]Шанс выпадения:[/bold cyan] {drop_chance:.1f}%\n"
+        f"[bold cyan]Комментарий ИИ:[/bold cyan] [italic green]{reason}[/italic green]\n"
+        f"{'-' * 40}\n"
+        f"[bold white]Описание:[/bold white]\n{desc}"
     )
-    return result
+
+    console.print(Panel(
+        content,
+        title=f"[bold yellow]✨ НАГРАДА: {chosen_item['name'].upper()} ✨[/bold yellow]",
+        border_style="green",
+        padding=(1, 2)
+    ))
+
 
 class SmartLootGenerator:
     def __init__(self):
-        print("Загрузка компонентов ИИ...")
-        self.encoder = SentenceTransformer('all-MiniLM-L6-v2')
-        print("Подключение к базе знаний ChromaDB...")
-        self.db_client = chromadb.PersistentClient(path="./dnd_vector_db")
-        try:
-            self.collection = self.db_client.get_collection(name="magic_items")
-        except chromadb.errors.InvalidCollectionException:  # Конкретная ошибка!
-            print("⚠️ Ошибка: Коллекция 'magic_items' не найдена в векторной базе. Сначала запусти vectorizer.py!")
-            exit()
+        with console.status("[bold green]Загрузка компонентов ИИ...[/bold green]", spinner="dots"):
+            self.encoder = SentenceTransformer('all-MiniLM-L6-v2')
+            self.db_client = chromadb.PersistentClient(path="./dnd_vector_db")
 
-        try:
-            with open('scaler_hybrid.pkl', 'rb') as f:
-                self.current_scaler = pickle.load(f)
-        except FileNotFoundError:
-            print("⚠️ Ошибка: Файл 'scaler_hybrid.pkl' не найден!")
-            exit()
+            try:
+                self.collection = self.db_client.get_collection(name="magic_items")
+            except chromadb.errors.InvalidCollectionException:
+                console.print(
+                    "[bold red]⚠️ Ошибка: Коллекция 'magic_items' не найдена в векторной базе. Сначала запусти vectorizer.py![/bold red]")
+                exit()
 
-        self.model = DnDItemRanker(input_size=15)
-        self.load_model('dnd_hybrid_weights.pth')
+            try:
+                with open('scaler_hybrid.pkl', 'rb') as f:
+                    self.current_scaler = pickle.load(f)
+            except FileNotFoundError:
+                console.print("[bold red]⚠️ Ошибка: Файл 'scaler_hybrid.pkl' не найден![/bold red]")
+                exit()
+
+            self.model = DnDItemRanker(input_size=15)
+            self.load_model('dnd_hybrid_weights.pth')
+
+        console.print("[dim]✅ ИИ-модули и база данных загружены.[/dim]")
 
     def load_model(self, path):
         try:
             self.model.load_state_dict(torch.load(path, weights_only=True))
             self.model.eval()
         except FileNotFoundError:
-            print(f"\n⚠️ Ошибка: Файл {path} не найден!")
+            console.print(f"[bold red]\n⚠️ Ошибка: Файл {path} не найден![/bold red]")
             exit()
 
     def generate_loot(self, location_text, party_text, party_level, story_importance, party_inventory=[]):
@@ -166,19 +198,21 @@ class SmartLootGenerator:
 
         candidates.sort(key=lambda x: x['final_score'], reverse=True)
 
-        print("\n" + "=" * 50)
-        print(" 🛠️ DEBUG: ТОП-3 ПРЕДМЕТА ГЛАЗАМИ ИИ")
-        print("=" * 50)
+        console.print()
+        table = Table(title="[dim]🛠️ DEBUG: ТОП-3 ПРЕДМЕТА ГЛАЗАМИ ИИ[/dim]", box=box.SIMPLE)
+        table.add_column("Название", style="cyan")
+        table.add_column("Редкость", style="magenta")
+        table.add_column("Скор (L | P | D)", justify="right", style="white")
+        table.add_column("Статус", justify="center")
+
         for i in range(min(3, len(candidates))):
             c = candidates[i]
-            status = "✅ ПРОШЕЛ" if c['final_score'] >= 0.30 else "❌ ОТКЛОНЕН"
-            print(f"{i + 1}. {c['name']} ({c['rarity']}) -> {status}")
-            print(f"   📊 Итоговый Regression Score: {c['final_score']:.3f}")
-            print(f"   ├─ Локация: {c['loc_score']:.3f}")
-            print(f"   ├─ Партия:  {c['party_score']:.3f}")
-            print(f"   └─ Дельта:  {c['delta']}")
-            print("-" * 50)
-        print("=" * 50 + "\n")
+            status = "[bold green]✅ ПРОШЕЛ[/bold green]" if c[
+                                                                'final_score'] >= 0.30 else "[bold red]❌ ОТКЛОНЕН[/bold red]"
+            score_str = f"{c['final_score']:.3f} ([dim]{c['loc_score']:.2f} | {c['party_score']:.2f} | {c['delta']}[/dim])"
+            table.add_row(c['name'], c['rarity'].title(), score_str, status)
+
+        console.print(table)
 
         valid_candidates = []
         for item in candidates:
@@ -189,37 +223,38 @@ class SmartLootGenerator:
         valid_candidates.sort(key=lambda x: x['final_score'], reverse=True)
         return valid_candidates
 
+
 if __name__ == "__main__":
-    print("\n" + "=" * 55)
-    print(" 🐉 УМНЫЙ ГЕНЕРАТОР ЛУТА D&D 5e")
-    print("=" * 55)
+    os.system('cls' if os.name == 'nt' else 'clear')
+    console.print(Rule(title="[bold green]🐉 УМНЫЙ ГЕНЕРАТОР ЛУТА D&D 5e 🐉[/bold green]", style="green"))
+    console.print()
 
     generator = SmartLootGenerator()
-    print("Система готова к работе!\n")
 
     while True:
-        print("-" * 55)
-        command = input("Нажмите [Enter] для генерации или 'q' для выхода: ").strip().lower()
+        console.print(Rule(style="dim"))
+        command = console.input(
+            "[bold white]Нажмите [Enter] для генерации или 'q' для выхода:[/bold white] ").strip().lower()
         if command in ['q', 'й']:
-            print("Удачных игр!")
+            console.print("[italic green]Удачных игр![/italic green] 🎲")
             break
 
         try:
-            lvl_input = input("⚔️ Уровень группы (1-20): ").strip().lower()
+            lvl_input = console.input("[bold cyan]⚔️  Уровень группы (1-20):[/bold cyan] ").strip().lower()
             if lvl_input in ['q', 'й']: break
             party_level = int(lvl_input)
 
-            imp_input = input("🔥 Важность боя (0.0 - 1.0): ").strip().lower()
+            imp_input = console.input("[bold red]🔥 Важность боя (0.0 - 1.0):[/bold red] ").strip().lower()
             if imp_input in ['q', 'й']: break
             story_importance = float(imp_input)
 
         except ValueError:
-            print("⚠️ Ошибка ввода чисел.")
+            console.print("[bold red]⚠️ Ошибка: Вводите только числа![/bold red]")
             continue
 
         dyn_loc = f"{random.choice(TERRAIN)}, {random.choice(ATMOSPHERE)}, {random.choice(ENEMY_FACTIONS)}, {random.choice(ENEMY_ACTIONS)}"
-        print(f"🗺️ ЛОКАЦИЯ (Например: {dyn_loc}):")
-        loc_input = input("   > ")
+        console.print(f"[bold yellow]🗺️  ЛОКАЦИЯ[/bold yellow] [dim](Например: {dyn_loc}):[/dim]")
+        loc_input = console.input("   [bold]>[/bold] ")
 
         party_members = []
         base_classes_list = list(CLASS_LORE.keys())
@@ -230,17 +265,15 @@ if __name__ == "__main__":
             party_members.append(f"{sub_cls.capitalize()} {base_cls.capitalize()}")
         dyn_party = ", ".join(party_members)
 
-        print(f"🛡️ СОСТАВ ПАРТИИ (Например: {dyn_party}):")
-        party_input = input("   > ")
+        console.print(f"[bold yellow]🛡️  СОСТАВ ПАРТИИ[/bold yellow] [dim](Например: {dyn_party}):[/dim]")
+        party_input = console.input("   [bold]>[/bold] ")
 
-        print("\n🧠 ИИ анализирует двойной контекст...")
+        with console.status("[bold purple]🧠 ИИ анализирует двойной контекст...[/bold purple]", spinner="bouncingBar"):
+            pool = generator.generate_loot(
+                location_text=loc_input,
+                party_text=party_input,
+                party_level=party_level,
+                story_importance=story_importance
+            )
 
-        pool = generator.generate_loot(
-            location_text=loc_input,
-            party_text=party_input,
-            party_level=party_level,
-            story_importance=story_importance
-        )
-
-        print(roll_final_loot(pool, party_level))
-        print("-" * 55 + "\n")
+        roll_final_loot(pool, party_level)
