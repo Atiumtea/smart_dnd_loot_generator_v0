@@ -171,7 +171,6 @@ ENEMY_ACTIONS = [
     "repairing their weapons", "hiding in the shadows", "worshipping an idol"
 ]
 
-
 # ==========================================
 # 4. ВСПОМОГАТЕЛЬНАЯ ЛОГИКА
 # ==========================================
@@ -183,7 +182,6 @@ def get_type_ohe(item_type_str: str) -> list:
         pattern = rf'\b{t}\b'
         if re.search(pattern, item_type_str):
             ohe[i] = 1.0
-            break
 
     if sum(ohe) == 0:
         ohe[-1] = 1.0
@@ -204,16 +202,12 @@ def build_party_semantics(party_input_string: str) -> tuple[str, list[str]]:
             found_base_classes.append(cls)
             enriched_parts.append(f"{cls}: {lore['base']}")
 
-            # Проверяем подклассы только для найденного класса
             for sub, sub_desc in lore['subclasses'].items():
                 if sub in party_lower:
                     enriched_parts.append(f"({sub} - {sub_desc})")
 
-    # Если парсер ничего не нашел (пользователь ввел что-то странное),
-    # возвращаем исходный текст, чтобы модель не упала
     final_text = " ".join(enriched_parts) if enriched_parts else party_input_string
     return final_text, found_base_classes
-
 
 # ==========================================
 # 5. АРХИТЕКТУРА НЕЙРОСЕТИ
