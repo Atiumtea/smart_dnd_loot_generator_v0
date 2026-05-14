@@ -18,43 +18,33 @@ import numpy as np
 import pickle
 import random
 import re
+import chromadb
 from sentence_transformers import SentenceTransformer, util
 from models import DnDItemRanker, CLASS_SYNERGY, get_type_ohe
+
 
 # ==========================================
 # 1. ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 # ==========================================
 def get_rarity_val(rarity_str, expected_rarity=3):
-    """
-    Умный парсер редкости. Подстраивает 'varies' и мульти-тир предметы
-    под текущий уровень партии.
-    """
     r = str(rarity_str).lower()
-
     if 'varies' in r:
         return expected_rarity
-
     found_rarities = []
-
     if 'artifact' in r: found_rarities.append(6)
     if 'legendary' in r: found_rarities.append(5)
-
     if 'very rare' in r:
         found_rarities.append(4)
-        r = r.replace('very rare', '')  # Вырезаем, чтобы не было ложного 'rare'
-
+        r = r.replace('very rare', '')
     if 'uncommon' in r:
         found_rarities.append(2)
-        r = r.replace('uncommon', '')  # Вырезаем, чтобы не было ложного 'common'
-
+        r = r.replace('uncommon', '')
     if re.search(r'\brare\b', r): found_rarities.append(3)
     if re.search(r'\bcommon\b', r): found_rarities.append(1)
 
     if not found_rarities:
         return 1
-
     best_rarity = min(found_rarities, key=lambda x: abs(x - expected_rarity))
-
     return best_rarity
 
 
@@ -68,9 +58,7 @@ def get_expected_rarity_for_level(level):
     else:
         return 5
 
-# ==========================================
-# 2. ФИНАЛЬНЫЙ РАНДОМАЙЗЕР (ИГРОВАЯ ЛОГИКА)
-# ==========================================
+
 def roll_final_loot(valid_items, party_level):
     print("\n🎲 Бросаем виртуальные кубики...")
 
@@ -81,12 +69,11 @@ def roll_final_loot(valid_items, party_level):
         gold_amount = random.randint(10, 50) * party_level
         return f"\n💰 Стоящего лута нет. Вы нашли мешочек с {gold_amount} зм."
 
-    # Взвешенный бросок
+    # Взвешенный бросок (веса уже возведены в куб на этапе отбора)
     weights = [item['final_score'] for item in valid_items]
     chosen_item = random.choices(valid_items, weights=weights, k=1)[0]
     drop_chance = (chosen_item['final_score'] / sum(weights)) * 100
 
-    # --- ЛОГИКА ОБЪЯСНЕНИЯ (Новое!) ---
     loc_s = chosen_item.get('loc_score', 0)
     party_s = chosen_item.get('party_score', 0)
 
@@ -102,36 +89,37 @@ def roll_final_loot(valid_items, party_level):
         f"   • Редкость: {chosen_item['rarity']}\n"
         f"   • Тип: {chosen_item['type']}\n"
         f"   • Шанс из пула: {drop_chance:.1f}%\n"
-        f"   💬 Комментарий: {reason}\n"  # Наше объяснение
-        f"   • Описание: {chosen_item['description'][:200]}..."
+        f"   💬 Комментарий: {reason}\n"
+        f"   • Описание: {str(chosen_item.get('description', ''))[:200]}..."
     )
     return result
 
 
 # ==========================================
-# 3. ГЛАВНЫЙ КЛАСС СИСТЕМЫ
+# 2. ГЛАВНЫЙ КЛАСС СИСТЕМЫ
 # ==========================================
 class SmartLootGenerator:
     def __init__(self):
         print("Загрузка компонентов ИИ...")
         self.encoder = SentenceTransformer('all-MiniLM-L6-v2')
 
-        with open('dnd_knowledge_base.pkl', 'rb') as f:
-            self.kb = pickle.load(f)
-
-        self.kb_embeddings = torch.tensor(np.stack(self.kb['embedding'].values))
+        print("Подключение к базе знаний ChromaDB...")
+        self.db_client = chromadb.PersistentClient(path="./dnd_vector_db")
+        try:
+            self.collection = self.db_client.get_collection(name="magic_items")
+        except Exception:
+            print("⚠️ Ошибка: Векторная база не найдена! Сначала запусти vectorizer.py")
+            exit()
 
         try:
             with open('scaler_hybrid.pkl', 'rb') as f:
                 self.current_scaler = pickle.load(f)
         except FileNotFoundError:
-            print("⚠️ Ошибка: Файл 'scaler_hybrid.pkl' не найден! Сначала запусти train_hybrid_evaluate.py")
-            exit()  # Прерываем работу, если скейлера нет
+            print("⚠️ Ошибка: Файл 'scaler_hybrid.pkl' не найден! Запусти скрипт обучения.")
+            exit()
 
         self.model = DnDItemRanker(input_size=15)
         self.current_model_name = "Гибридная модель (Синтетика + Разметка)"
-
-        # Сразу загружаем веса
         self.load_model('dnd_hybrid_weights.pth')
 
     def load_model(self, path):
@@ -140,57 +128,53 @@ class SmartLootGenerator:
             self.model.eval()
         except FileNotFoundError:
             print(f"\n⚠️ Ошибка: Файл {path} не найден! Убедитесь, что обучили модель.")
-            exit()  # Прерываем работу, если весов нет
-
-    def switch_model(self):
-        # Определяем, на что переключаться
-        if "Синтетика" in self.current_model_name:
-            target_path = self.hybrid_weights
-            target_name = "Гибрид (С учетом твоих правок)"
-            target_scaler = self.scaler_hybrid
-        else:
-            target_path = self.synthetic_weights
-            target_name = "Синтетика (Чистая математика)"
-            target_scaler = self.scaler_synthetic
-
-        try:
-            # Переключаем веса
-            self.model.load_state_dict(torch.load(target_path, weights_only=True))
-            self.model.eval()
-
-            # ПЕРЕКЛЮЧАЕМ СКЕЙЛЕР!
-            self.current_scaler = target_scaler
-            self.current_model_name = target_name
-
-            print(f"🔄 Модель успешно переключена на: [ {self.current_model_name} ]")
-        except FileNotFoundError:
-            print(f"⚠️ Ошибка: Файл {target_path} не найден! Сначала запусти соответствующий скрипт обучения.")
+            exit()
 
     def generate_loot(self, location_text, party_text, party_level, story_importance, party_inventory=[]):
-
         with torch.no_grad():
-            # --- ЭТАП 1: ДВОЙНОЙ ВЕКТОРНЫЙ ПОИСК (Recall) ---
-            loc_emb = self.encoder.encode(location_text, convert_to_tensor=True)
-            loc_scores = util.cos_sim(loc_emb, self.kb_embeddings)[0]
+            loc_emb = self.encoder.encode(location_text)
+            party_emb = self.encoder.encode(party_text)
 
-            party_emb = self.encoder.encode(party_text, convert_to_tensor=True)
-            party_scores = util.cos_sim(party_emb, self.kb_embeddings)[0]
+        # --- ЭТАП 1: ШИРОКИЙ ЗАХВАТ В CHROMADB (Broad Recall) ---
+        results = self.collection.query(
+            query_embeddings=[loc_emb.tolist(), party_emb.tolist()],
+            n_results=400,
+            include=['metadatas', 'documents', 'embeddings']
+        )
 
-        combined_recall_scores = (loc_scores + party_scores) / 2.0
-        top_50_indices = torch.topk(combined_recall_scores, k=50).indices.tolist()
+        unique_candidates = {}
+        for q_idx in range(2):
+            for i, doc_id in enumerate(results['ids'][q_idx]):
+                if doc_id not in unique_candidates:
+                    unique_candidates[doc_id] = {
+                        'name': results['metadatas'][q_idx][i]['name'],
+                        'type': results['metadatas'][q_idx][i]['type'],
+                        'rarity': results['metadatas'][q_idx][i]['rarity'],
+                        'description': results['documents'][q_idx][i],
+                        'embedding': results['embeddings'][q_idx][i]
+                    }
 
-        # --- ЭТАП 2: СБОРКА ПРИЗНАКОВ (Feature Engineering) ---
+        # --- ЭТАП 2: СБОРКА ПРИЗНАКОВ И БАЗОВАЯ ФИЛЬТРАЦИЯ ---
+        candidates_embs = torch.tensor([c['embedding'] for c in unique_candidates.values()], dtype=torch.float32)
+        loc_emb_tensor = torch.tensor(loc_emb, dtype=torch.float32)
+        party_emb_tensor = torch.tensor(party_emb, dtype=torch.float32)
+
+        loc_scores_raw = util.cos_sim(loc_emb_tensor, candidates_embs)[0]
+        party_scores_raw = util.cos_sim(party_emb_tensor, candidates_embs)[0]
+
         features_list = []
         candidates = []
         expected_rarity = get_expected_rarity_for_level(party_level)
 
-        for idx in top_50_indices:
-            item = self.kb.iloc[idx]
-            l_score = loc_scores[idx].item()
-            p_score = party_scores[idx].item()
+        for i, (doc_id, item) in enumerate(unique_candidates.items()):
+            l_score = loc_scores_raw[i].item()
+            p_score = party_scores_raw[i].item()
+
+            if max(l_score, p_score) < 0.10:
+                continue
 
             delta = get_rarity_val(item['rarity'], expected_rarity) - expected_rarity
-            is_duplicate = 1.0 if str(item['name']).lower() in [i.lower() for i in party_inventory] else 0.0
+            is_duplicate = 1.0 if str(item['name']).lower() in [inv.lower() for inv in party_inventory] else 0.0
 
             item_type_str = str(item.get('type', 'wondrous item')).lower()
             type_ohe_list = get_type_ohe(item_type_str)
@@ -203,18 +187,17 @@ class SmartLootGenerator:
                         synergy_flag = 1.0
                         break
 
-            feature_vector = [
-                                 l_score, p_score, story_importance, delta, is_duplicate, synergy_flag
-                             ] + type_ohe_list
-
+            feature_vector = [l_score, p_score, story_importance, delta, is_duplicate, synergy_flag] + type_ohe_list
             features_list.append(feature_vector)
 
-            item_dict = item.to_dict()
-            item_dict.update({
+            item.update({
                 'loc_score': l_score, 'party_score': p_score,
                 'delta': delta, 'synergy': synergy_flag
             })
-            candidates.append(item_dict)
+            candidates.append(item)
+
+        if not candidates:
+            return []
 
         # --- ЭТАП 3: MLP ПРЕДСКАЗАНИЕ ---
         X_raw = np.array(features_list)
@@ -229,7 +212,6 @@ class SmartLootGenerator:
 
         candidates.sort(key=lambda x: x['final_score'], reverse=True)
 
-        # Дебаг-вывод оставляем без изменений
         print("\n" + "=" * 50)
         print(" 🛠️ DEBUG: ТОП-3 ПРЕДМЕТА ГЛАЗАМИ НЕЙРОСЕТИ")
         print("=" * 50)
@@ -244,23 +226,19 @@ class SmartLootGenerator:
             print("-" * 50)
         print("=" * 50 + "\n")
 
-        # --- ЭТАП 4: ПОДГОТОВКА ВАЛИДНОГО ПУЛА ---
+        # --- ЭТАП 4: ФИНАЛЬНАЯ ПОДГОТОВКА ПУЛА ---
         valid_candidates = []
         for item in candidates:
             if item['final_score'] >= 0.36:
-                # ИСХОДНИК ИСПРАВЛЕН: Возводим скор в 3 степень для "эффекта доминирования" лучших предметов
-                # 0.9^3 = 0.729 (очень много шансов)
-                # 0.4^3 = 0.064 (почти нет шансов)
                 item['final_score'] = item['final_score'] ** 3
                 valid_candidates.append(item)
 
         valid_candidates.sort(key=lambda x: x['final_score'], reverse=True)
-
         return valid_candidates
 
 
 # ==========================================
-# 4. ИНТЕРАКТИВНЫЙ ИНТЕРФЕЙС
+# 3. ИНТЕРАКТИВНЫЙ ИНТЕРФЕЙС
 # ==========================================
 if __name__ == "__main__":
     print("\n" + "=" * 55)
@@ -278,7 +256,6 @@ if __name__ == "__main__":
             break
 
         try:
-            # Считываем как строку, чтобы проверить на 'q', и только потом переводим в число
             lvl_input = input("⚔️ Уровень группы (1-20): ").strip().lower()
             if lvl_input in ['q', 'й']: break
             party_level = int(lvl_input)
