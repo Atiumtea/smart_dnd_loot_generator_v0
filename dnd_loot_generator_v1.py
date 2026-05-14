@@ -18,7 +18,7 @@ import random
 import re
 import chromadb
 from sentence_transformers import SentenceTransformer, util
-from models import DnDItemRanker, CLASS_SYNERGY, get_type_ohe
+from models import DnDItemRanker, CLASS_SYNERGY, get_type_ohe, TERRAIN, ATMOSPHERE, ENEMY_FACTIONS, ENEMY_ACTIONS
 
 def get_rarity_val(rarity_str, expected_rarity=3):
     r = str(rarity_str).lower()
@@ -248,7 +248,8 @@ if __name__ == "__main__":
             print("⚠️ Ошибка ввода чисел.")
             continue
 
-        print("🗺️ ЛОКАЦИЯ (напр: shipwreck, pirate, mutant, poison):")
+        dyn_loc = f"{random.choice(TERRAIN)}, {random.choice(ATMOSPHERE)}, {random.choice(ENEMY_FACTIONS)}, {random.choice(ENEMY_ACTIONS)}"
+        print(f"🗺️ ЛОКАЦИЯ (напр: {dyn_loc}):")
         loc_input = input("   > ")
 
         print("🛡️ СОСТАВ ПАРТИИ (напр: Life Cleric, Cavalier Fighter, Assassin Rogue):")

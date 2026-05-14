@@ -2,6 +2,37 @@ import torch.nn as nn
 import numpy as np
 import re
 
+# === МАССИВЫ ДЛЯ ГЕНЕРАЦИИ ПРИМЕРОВ ЛОКАЦИЙ ===
+TERRAIN = [
+    "dark crypt", "abandoned mine", "city slums", "sewers network",
+    "noble estate", "wizard tower", "ancient forest", "frozen tundra",
+    "scorching desert", "stinking swamp", "mountain peak", "shipwreck",
+    "volcanic crater", "feywild glade", "shadowfell wasteland", "astral plane",
+    "underground cavern", "ruined temple", "floating island", "tavern basement"
+]
+
+ATMOSPHERE = [
+    "thick fog", "heavy rain", "pitch black", "cobwebs and dust",
+    "smell of sulfur", "glowing arcane runes", "howling blizzard",
+    "eerie silence", "bloodstains", "magical twilight", "overgrown with vines",
+    "crumbling walls", "knee-deep mud", "oppressive heat", "toxic fumes"
+]
+
+ENEMY_FACTIONS = [
+    "bandit highwaymen", "pirate mutineers", "doomsday cultists", "drow assassins",
+    "undead horde", "vampire spawn", "necromancer and skeletons",
+    "mind flayer colony", "beholder", "yuan-ti abominations", "giant spiders",
+    "mimics and ropers", "young red dragon", "hag coven", "fire elementals",
+    "abyssal demons", "goblin raiding party", "rogue artificer constructs"
+]
+
+ENEMY_ACTIONS = [
+    "setting up an ambush", "guarding a locked chest", "conducting a dark ritual",
+    "sleeping", "patrolling the area", "fighting a rival group",
+    "interrogating a prisoner", "feasting on a corpse", "searching for intruders",
+    "repairing their weapons", "hiding in the shadows", "worshipping an idol"
+]
+
 ITEM_TYPES = [
     'weapon', 'armor', 'potion', 'ring', 'scroll',
     'wand', 'staff', 'rod', 'wondrous item'

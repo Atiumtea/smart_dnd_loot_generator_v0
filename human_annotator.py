@@ -1,7 +1,7 @@
 import os
 import logging
 import warnings
-from models import ITEM_TYPES, CLASS_SYNERGY, get_type_ohe
+from models import ITEM_TYPES, CLASS_SYNERGY, get_type_ohe, TERRAIN, ATMOSPHERE, ENEMY_FACTIONS, ENEMY_ACTIONS
 from generator_data import calculate_target_y
 
 os.environ['TRANSFORMERS_VERBOSITY'] = 'error'
@@ -26,44 +26,10 @@ import torch
 import re
 from sentence_transformers import SentenceTransformer, util
 
-# ==========================================
-# 1. МАТРИЦЫ
-# ==========================================
-TERRAIN = [
-    "dark crypt", "abandoned mine", "city slums", "sewers network",
-    "noble estate", "wizard tower", "ancient forest", "frozen tundra",
-    "scorching desert", "stinking swamp", "mountain peak", "shipwreck",
-    "volcanic crater", "feywild glade", "shadowfell wasteland", "astral plane",
-    "underground cavern", "ruined temple", "floating island", "tavern basement"
-]
-
-ATMOSPHERE = [
-    "thick fog", "heavy rain", "pitch black", "cobwebs and dust",
-    "smell of sulfur", "glowing arcane runes", "howling blizzard",
-    "eerie silence", "bloodstains", "magical twilight", "overgrown with vines",
-    "crumbling walls", "knee-deep mud", "oppressive heat", "toxic fumes"
-]
-
-ENEMY_FACTIONS = [
-    "bandit highwaymen", "pirate mutineers", "doomsday cultists", "drow assassins",
-    "undead horde", "vampire spawn", "necromancer and skeletons",
-    "mind flayer colony", "beholder", "yuan-ti abominations", "giant spiders",
-    "mimics and ropers", "young red dragon", "hag coven", "fire elementals",
-    "abyssal demons", "goblin raiding party", "rogue artificer constructs"
-]
-
-ENEMY_ACTIONS = [
-    "setting up an ambush", "guarding a locked chest", "conducting a dark ritual",
-    "sleeping", "patrolling the area", "fighting a rival group",
-    "interrogating a prisoner", "feasting on a corpse", "searching for intruders",
-    "repairing their weapons", "hiding in the shadows", "worshipping an idol"
-]
-
 CLASSES = [
     "Fighter", "Rogue", "Wizard", "Cleric", "Paladin", "Ranger",
     "Bard", "Warlock", "Sorcerer", "Druid", "Monk", "Barbarian", "Artificer"
 ]
-
 
 def generate_dynamic_scenario():
     terrain = random.choice(TERRAIN)
