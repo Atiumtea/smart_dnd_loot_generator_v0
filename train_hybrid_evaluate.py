@@ -12,6 +12,14 @@ import seaborn as sns
 import pickle
 import os
 from models import DnDItemRanker, ITEM_TYPES
+import random
+
+def set_seed(seed=42):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
 sns.set_theme(style="whitegrid")
 plt.rcParams['figure.figsize'] = (10, 6)
@@ -73,6 +81,7 @@ def load_hybrid_data(use_synthetic):
 # 3. ОСНОВНОЙ СКРИПТ ОБУЧЕНИЯ
 # ==========================================
 def train_and_evaluate(use_synthetic):
+    set_seed(42)
     df = load_hybrid_data(use_synthetic)
 
     base_features = ['loc_score', 'party_score', 'story_importance', 'level_rarity_delta', 'is_duplicate', 'synergy_flag']
