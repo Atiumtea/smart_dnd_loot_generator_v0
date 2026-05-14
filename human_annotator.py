@@ -233,11 +233,11 @@ while True:
 
     if ans == "":
         ans = str(suggested_ans)
-        print(f"[dim]Принята оценка ИИ: {ans}[/dim]")
+        console.print(f"[dim]Принята оценка ИИ: {ans}[/dim]")
 
     valid_scores = [str(i) for i in range(1, 11)]
     if ans not in valid_scores:
-        print("[red]⚠️ Ошибка ввода. Пропускаем...[/red]")
+        console.print("[red]⚠️ Ошибка ввода. Пропускаем...[/red]")
         continue
 
     target_y = round((int(ans) - 1) / 9.0, 4)
