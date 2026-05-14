@@ -2,13 +2,6 @@ import os
 import logging
 import warnings
 
-os.environ['TRANSFORMERS_VERBOSITY'] = 'error'
-os.environ['SAFETENSORS_FAST_GPU'] = '1'
-
-logging.getLogger("transformers.modeling_utils").setLevel(logging.ERROR)
-logging.getLogger("sentence_transformers").setLevel(logging.ERROR)
-warnings.filterwarnings("ignore")
-
 import torch
 import torch.nn as nn
 import pandas as pd
@@ -17,9 +10,16 @@ import pickle
 import random
 import re
 import chromadb
+import chromadb.errors
 from sentence_transformers import SentenceTransformer, util
 
 from models import DnDItemRanker, CLASS_SYNERGY, get_type_ohe, TERRAIN, ATMOSPHERE, ENEMY_FACTIONS, ENEMY_ACTIONS, build_party_semantics, CLASS_LORE
+
+os.environ['TRANSFORMERS_VERBOSITY'] = 'error'
+os.environ['SAFETENSORS_FAST_GPU'] = '1'
+logging.getLogger("transformers.modeling_utils").setLevel(logging.ERROR)
+logging.getLogger("sentence_transformers").setLevel(logging.ERROR)
+warnings.filterwarnings("ignore")
 
 def get_rarity_val(rarity_str, expected_rarity=3):
     r = str(rarity_str).lower()
@@ -77,8 +77,8 @@ class SmartLootGenerator:
         self.db_client = chromadb.PersistentClient(path="./dnd_vector_db")
         try:
             self.collection = self.db_client.get_collection(name="magic_items")
-        except Exception:
-            print("⚠️ Ошибка: Векторная база не найдена!")
+        except chromadb.errors.InvalidCollectionException:  # Конкретная ошибка!
+            print("⚠️ Ошибка: Коллекция 'magic_items' не найдена в векторной базе. Сначала запусти vectorizer.py!")
             exit()
 
         try:
