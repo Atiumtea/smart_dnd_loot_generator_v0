@@ -1,7 +1,8 @@
 import os
 import logging
 import warnings
-from models import ITEM_TYPES, CLASS_SYNERGY, get_type_ohe, TERRAIN, ATMOSPHERE, ENEMY_FACTIONS, ENEMY_ACTIONS
+from models import ITEM_TYPES, CLASS_SYNERGY, get_type_ohe, CLASS_LORE, TERRAIN, ATMOSPHERE, ENEMY_FACTIONS, \
+    ENEMY_ACTIONS, build_party_semantics
 from generator_data import calculate_target_y
 
 os.environ['TRANSFORMERS_VERBOSITY'] = 'error'
@@ -14,7 +15,6 @@ warnings.filterwarnings("ignore")
 from rich.console import Console, Group
 from rich.panel import Panel
 from rich.table import Table
-from rich.text import Text
 from rich.rule import Rule
 
 console = Console()
@@ -26,20 +26,21 @@ import torch
 import re
 from sentence_transformers import SentenceTransformer, util
 
-CLASSES = [
-    "Fighter", "Rogue", "Wizard", "Cleric", "Paladin", "Ranger",
-    "Bard", "Warlock", "Sorcerer", "Druid", "Monk", "Barbarian", "Artificer"
-]
 
 def generate_dynamic_scenario():
-    terrain = random.choice(TERRAIN)
-    atmosphere = random.choice(ATMOSPHERE)
-    faction = random.choice(ENEMY_FACTIONS)
-    action = random.choice(ENEMY_ACTIONS)
+    loc = f"{random.choice(TERRAIN)}, {random.choice(ATMOSPHERE)}, {random.choice(ENEMY_FACTIONS)}, {random.choice(ENEMY_ACTIONS)}"
 
-    loc = f"{terrain}, {atmosphere}, {faction}, {action}"
+    # 🌟 Генерируем партию с подклассами (напр. "Cavalier Fighter")
     party_size = random.randint(3, 5)
-    party = ", ".join(random.sample(CLASSES, k=party_size))
+    party_members = []
+    base_classes_list = list(CLASS_LORE.keys())
+
+    for _ in range(party_size):
+        base_cls = random.choice(base_classes_list)
+        sub_cls = random.choice(list(CLASS_LORE[base_cls]['subclasses'].keys()))
+        party_members.append(f"{sub_cls.capitalize()} {base_cls.capitalize()}")
+
+    party = ", ".join(party_members)
     level = random.randint(1, 20)
     imp = round(random.betavariate(2, 5), 2)
 
@@ -76,7 +77,6 @@ kb = pd.read_pickle('dnd_knowledge_base.pkl')
 kb_emb = torch.tensor(np.stack(kb['embedding'].values))
 
 GOLD_FILE = 'manual_gold_standard.csv'
-
 base_cols = [
     'item_name', 'location_text', 'party_text',
     'loc_score', 'party_score', 'story_importance',
@@ -89,7 +89,7 @@ if not os.path.exists(GOLD_FILE):
     pd.DataFrame(columns=cols).to_csv(GOLD_FILE, index=False, sep=';')
 
 print("\n" + "=" * 60)
-print(" 🤖 АННОТАТОР ДАННЫХ (MLP VISION MODE) 🤖")
+print(" 🤖 АННОТАТОР ДАННЫХ 🤖")
 print("=" * 60)
 
 cheat_sheet = """
@@ -122,8 +122,11 @@ input()
 while True:
     scen = generate_dynamic_scenario()
 
+    semantic_party, found_base_classes = build_party_semantics(scen['party'])
+
     l_emb = encoder.encode(scen['loc'], convert_to_tensor=True)
-    p_emb = encoder.encode(scen['party'], convert_to_tensor=True)
+    p_emb = encoder.encode(semantic_party, convert_to_tensor=True)
+
     l_scores = util.cos_sim(l_emb, kb_emb)[0]
     p_scores = util.cos_sim(p_emb, kb_emb)[0]
 
@@ -132,7 +135,6 @@ while True:
         0, len(kb) - 1)
     item = kb.iloc[idx]
 
-    # --- РАСЧЕТ ПРИЗНАКОВ ---
     l_s = round(l_scores[idx].item(), 4)
     p_s = round(p_scores[idx].item(), 4)
     exp_r = get_expected_rarity(scen['level'])
@@ -143,19 +145,14 @@ while True:
     type_ohe = get_type_ohe(i_type)
 
     syn = 0.0
-    p_low = scen['party'].lower()
     for cls, allowed in CLASS_SYNERGY.items():
-        if cls in p_low and any(at in i_type for at in allowed):
+        if cls in found_base_classes and any(at in i_type for at in allowed):
             syn = 1.0;
             break
 
-    # --- 🤖 СОВЕТ СИНТЕТИКИ ---
     synth_target = calculate_target_y(l_s, p_s, scen['imp'], delta, is_dup, syn, i_type)
-    # Переводим 0.0-1.0 в шкалу 1-10 для удобства восприятия
     suggested_ans = int(round(synth_target * 9)) + 1
 
-    # --- UI: ФОКУС НА ЦИФРАХ ---
-    # 1. Цифры (То, что видит сеть - крупно и ярко)
     math_table = Table.grid(padding=(0, 4))
     math_table.add_row(
         f"🎯 [bold cyan]LOC SCORE:[/bold cyan]  [bold white]{l_s:<5}[/bold white]",
@@ -174,7 +171,6 @@ while True:
         f"🤝 [bold cyan]SYNERGY:[/bold cyan]    {syn_color}"
     )
 
-    # 2. Текст (Справочная инфа - тускло)
     ctx_table = Table.grid(padding=(0, 1))
     ctx_table.add_row("[dim]LOC:[/dim]", f"[dim]{scen['loc']}[/dim]")
     ctx_table.add_row("[dim]PTY:[/dim]", f"[dim]{scen['party']}[/dim]")
@@ -188,8 +184,6 @@ while True:
     console.print()
     console.print(Panel(content, title="[bold blue]ОЦЕНКА ПРЕДМЕТА[/bold blue]", border_style="blue", expand=False))
 
-    # --- ИНТЕРАКТИВ ---
-    # Пользователь может просто нажать Enter, чтобы согласиться с синтетикой
     prompt_text = f"[bold white]Оценка (1-10) [Enter = согласиться с ИИ: [bold green]{suggested_ans}[/bold green]] или 'q': [/bold white]"
     ans = console.input(prompt_text).strip().lower()
 

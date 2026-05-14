@@ -18,42 +18,29 @@ import random
 import re
 import chromadb
 from sentence_transformers import SentenceTransformer, util
-from models import DnDItemRanker, CLASS_SYNERGY, get_type_ohe, TERRAIN, ATMOSPHERE, ENEMY_FACTIONS, ENEMY_ACTIONS
+
+from models import DnDItemRanker, CLASS_SYNERGY, get_type_ohe, TERRAIN, ATMOSPHERE, ENEMY_FACTIONS, ENEMY_ACTIONS, build_party_semantics
 
 def get_rarity_val(rarity_str, expected_rarity=3):
     r = str(rarity_str).lower()
-    if 'varies' in r:
-        return expected_rarity
-    found_rarities = []
-    if 'artifact' in r: found_rarities.append(6)
-    if 'legendary' in r: found_rarities.append(5)
-    if 'very rare' in r:
-        found_rarities.append(4)
-        r = r.replace('very rare', '')
-    if 'uncommon' in r:
-        found_rarities.append(2)
-        r = r.replace('uncommon', '')
-    if re.search(r'\brare\b', r): found_rarities.append(3)
-    if re.search(r'\bcommon\b', r): found_rarities.append(1)
-
-    if not found_rarities:
-        return 1
-    best_rarity = min(found_rarities, key=lambda x: abs(x - expected_rarity))
-    return best_rarity
+    if 'varies' in r: return expected_rarity
+    found = []
+    if 'artifact' in r: found.append(6)
+    if 'legendary' in r: found.append(5)
+    if 'very rare' in r: found.append(4); r = r.replace('very rare', '')
+    if 'uncommon' in r: found.append(2); r = r.replace('uncommon', '')
+    if re.search(r'\brare\b', r): found.append(3)
+    if re.search(r'\bcommon\b', r): found.append(1)
+    return min(found, key=lambda x: abs(x - expected_rarity)) if found else 1
 
 def get_expected_rarity_for_level(level):
-    if level <= 4:
-        return 2
-    elif level <= 10:
-        return 3
-    elif level <= 16:
-        return 4
-    else:
-        return 5
+    if level <= 4: return 2
+    elif level <= 10: return 3
+    elif level <= 16: return 4
+    else: return 5
 
 def roll_final_loot(valid_items, party_level):
     print("\n🎲 Бросаем виртуальные кубики...")
-
     if random.random() < 0.05:
         return "\n🎲 Выпала странная БЕЗДЕЛУШКА (бросьте d100 по таблице Trinkets)."
 
@@ -68,12 +55,9 @@ def roll_final_loot(valid_items, party_level):
     loc_s = chosen_item.get('loc_score', 0)
     party_s = chosen_item.get('party_score', 0)
 
-    if party_s > loc_s + 0.1:
-        reason = "Этот предмет идеально подходит способностям вашей группы."
-    elif loc_s > party_s + 0.1:
-        reason = "Этот трофей выглядит очень уместно в данной локации."
-    else:
-        reason = "Сбалансированная находка, которая вписывается в окружение и полезна героям."
+    if party_s > loc_s + 0.1: reason = "Этот предмет идеально подходит способностям вашей группы."
+    elif loc_s > party_s + 0.1: reason = "Этот трофей выглядит очень уместно в данной локации."
+    else: reason = "Сбалансированная находка, которая вписывается в окружение и полезна героям."
 
     result = (
         f"\n✨ НАГРАДА: {chosen_item['name']}\n"
@@ -89,24 +73,22 @@ class SmartLootGenerator:
     def __init__(self):
         print("Загрузка компонентов ИИ...")
         self.encoder = SentenceTransformer('all-MiniLM-L6-v2')
-
         print("Подключение к базе знаний ChromaDB...")
         self.db_client = chromadb.PersistentClient(path="./dnd_vector_db")
         try:
             self.collection = self.db_client.get_collection(name="magic_items")
         except Exception:
-            print("⚠️ Ошибка: Векторная база не найдена! Сначала запусти vectorizer.py")
+            print("⚠️ Ошибка: Векторная база не найдена!")
             exit()
 
         try:
             with open('scaler_hybrid.pkl', 'rb') as f:
                 self.current_scaler = pickle.load(f)
         except FileNotFoundError:
-            print("⚠️ Ошибка: Файл 'scaler_hybrid.pkl' не найден! Запусти скрипт обучения.")
+            print("⚠️ Ошибка: Файл 'scaler_hybrid.pkl' не найден!")
             exit()
 
         self.model = DnDItemRanker(input_size=15)
-        self.current_model_name = "Гибридная регрессионная модель (Knowledge Distillation)"
         self.load_model('dnd_hybrid_weights.pth')
 
     def load_model(self, path):
@@ -114,13 +96,15 @@ class SmartLootGenerator:
             self.model.load_state_dict(torch.load(path, weights_only=True))
             self.model.eval()
         except FileNotFoundError:
-            print(f"\n⚠️ Ошибка: Файл {path} не найден! Убедитесь, что обучили модель.")
+            print(f"\n⚠️ Ошибка: Файл {path} не найден!")
             exit()
 
     def generate_loot(self, location_text, party_text, party_level, story_importance, party_inventory=[]):
+        semantic_party, found_base_classes = build_party_semantics(party_text)
+
         with torch.no_grad():
             loc_emb = self.encoder.encode(location_text)
-            party_emb = self.encoder.encode(party_text)
+            party_emb = self.encoder.encode(semantic_party)
 
         results = self.collection.query(
             query_embeddings=[loc_emb.tolist(), party_emb.tolist()],
@@ -165,9 +149,8 @@ class SmartLootGenerator:
             type_ohe_list = get_type_ohe(item_type_str)
 
             synergy_flag = 0.0
-            party_lower = party_text.lower()
             for cls, allowed_types in CLASS_SYNERGY.items():
-                if cls in party_lower:
+                if cls in found_base_classes:
                     if any(t in item_type_str for t in allowed_types):
                         synergy_flag = 1.0
                         break
@@ -201,7 +184,6 @@ class SmartLootGenerator:
         print("=" * 50)
         for i in range(min(3, len(candidates))):
             c = candidates[i]
-            # Порог снижен до 0.30 из-за особенностей распределения MSELoss
             status = "✅ ПРОШЕЛ" if c['final_score'] >= 0.30 else "❌ ОТКЛОНЕН"
             print(f"{i + 1}. {c['name']} ({c['rarity']}) -> {status}")
             print(f"   📊 Итоговый Regression Score: {c['final_score']:.3f}")
