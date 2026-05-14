@@ -19,7 +19,7 @@ import re
 import chromadb
 from sentence_transformers import SentenceTransformer, util
 
-from models import DnDItemRanker, CLASS_SYNERGY, get_type_ohe, TERRAIN, ATMOSPHERE, ENEMY_FACTIONS, ENEMY_ACTIONS, build_party_semantics
+from models import DnDItemRanker, CLASS_SYNERGY, get_type_ohe, TERRAIN, ATMOSPHERE, ENEMY_FACTIONS, ENEMY_ACTIONS, build_party_semantics, CLASS_LORE
 
 def get_rarity_val(rarity_str, expected_rarity=3):
     r = str(rarity_str).lower()
@@ -231,10 +231,19 @@ if __name__ == "__main__":
             continue
 
         dyn_loc = f"{random.choice(TERRAIN)}, {random.choice(ATMOSPHERE)}, {random.choice(ENEMY_FACTIONS)}, {random.choice(ENEMY_ACTIONS)}"
-        print(f"🗺️ ЛОКАЦИЯ (напр: {dyn_loc}):")
+        print(f"🗺️ ЛОКАЦИЯ (Например: {dyn_loc}):")
         loc_input = input("   > ")
 
-        print("🛡️ СОСТАВ ПАРТИИ (напр: Life Cleric, Cavalier Fighter, Assassin Rogue):")
+        party_members = []
+        base_classes_list = list(CLASS_LORE.keys())
+        party_size = random.randint(3, 5)
+        for _ in range(party_size):
+            base_cls = random.choice(base_classes_list)
+            sub_cls = random.choice(list(CLASS_LORE[base_cls]['subclasses'].keys()))
+            party_members.append(f"{sub_cls.capitalize()} {base_cls.capitalize()}")
+        dyn_party = ", ".join(party_members)
+
+        print(f"🛡️ СОСТАВ ПАРТИИ (Например: {dyn_party}):")
         party_input = input("   > ")
 
         print("\n🧠 ИИ анализирует двойной контекст...")
