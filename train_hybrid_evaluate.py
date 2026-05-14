@@ -3,7 +3,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
@@ -19,7 +19,6 @@ plt.rcParams['figure.figsize'] = (10, 6)
 # ==========================================
 # ⚙️ НАСТРОЙКИ ОБУЧЕНИЯ
 # ==========================================
-# Поставь False, когда разметишь хотя бы 500-1000 предметов вручную!
 USE_SYNTHETIC = True
 
 # ==========================================
@@ -81,8 +80,7 @@ def load_hybrid_data():
 def train_and_evaluate():
     df = load_hybrid_data()
 
-    base_features = ['loc_score', 'party_score', 'story_importance', 'level_rarity_delta', 'is_duplicate',
-                     'synergy_flag']
+    base_features = ['loc_score', 'party_score', 'story_importance', 'level_rarity_delta', 'is_duplicate', 'synergy_flag']
     type_features = [f'type_{t.replace(" ", "_")}' for t in ITEM_TYPES]
     features = base_features + type_features
 
@@ -97,24 +95,6 @@ def train_and_evaluate():
         X, y, is_manual, test_size=0.15, random_state=42, stratify=is_manual
     )
 
-    manual_indices = np.where(is_man_train == 1)[0]
-
-    if len(manual_indices) > 0:
-        X_manual = X_train[manual_indices]
-        y_manual = y_train[manual_indices]
-
-        # ИСХОДНИК ИСПРАВЛЕН: Шум добавляется в ПРИЗНАКИ (X), а не в таргет (y) (Шаг 3)
-        # Таргет (оценку Мастера) оставляем неизменным!
-        y_repeated = np.concatenate([y_manual] * 50)
-        y_train = np.concatenate([y_train, y_repeated])
-
-        # Размножаем признаки и добавляем к ним случайный Гауссовский шум
-        X_repeated = np.vstack([X_manual] * 50)
-        noise = np.random.normal(0, 0.02, size=X_repeated.shape)
-        X_repeated = X_repeated + noise
-
-        X_train = np.vstack([X_train, X_repeated])
-
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
@@ -122,20 +102,32 @@ def train_and_evaluate():
     with open('scaler_hybrid.pkl', 'wb') as f:
         pickle.dump(scaler, f)
 
-    train_loader = DataLoader(DnDDataset(X_train_scaled, y_train), batch_size=128, shuffle=True)
+    # === ИСПРАВЛЕНИЕ: ПРОФЕССИОНАЛЬНЫЙ СЭМПЛИНГ ===
+    # Используем WeightedRandomSampler для балансировки синтетики и ручной разметки.
+    # Ручные примеры имеют вес в 50 раз больше, поэтому сеть будет учиться на них активнее.
+    sample_weights = np.where(is_man_train == 1, 50.0, 1.0)
+    sampler = WeightedRandomSampler(
+        weights=sample_weights,
+        num_samples=len(sample_weights),
+        replacement=True
+    )
+
+    train_dataset = DnDDataset(X_train_scaled, y_train)
+    # Передаем sampler вместо shuffle=True
+    train_loader = DataLoader(train_dataset, batch_size=128, sampler=sampler)
     test_loader = DataLoader(DnDDataset(X_test_scaled, y_test), batch_size=128, shuffle=False)
 
     model = DnDItemRanker(input_size=15)
 
-    # ИСХОДНИК ИСПРАВЛЕН: MSE заменен на BCELoss для Сигмоиды (Шаг 4)
-    # Для таргетов в диапазоне [0.0, 1.0] бинарная кросс-энтропия работает эффективнее
-    criterion = nn.BCELoss()
+    # === ИСПРАВЛЕНИЕ: МАТЕМАТИЧЕСКИ КОРРЕКТНЫЙ LOSS ===
+    # Для задачи регрессии (предсказание числа от 0.0 до 1.0) используем MSELoss.
+    criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=0.003)
 
     epochs = 40
     train_losses, test_losses = [], []
 
-    print("\n🚀 Начало гибридного обучения...")
+    print("\n🚀 Начало гибридного обучения (Knowledge Distillation)...")
     for epoch in range(epochs):
         model.train()
         epoch_train_loss = 0.0
@@ -162,10 +154,8 @@ def train_and_evaluate():
         test_losses.append(epoch_test_loss)
 
         if (epoch + 1) % 5 == 0:
-            print(
-                f"Эпоха [{epoch + 1}/{epochs}] | Train Loss: {epoch_train_loss:.4f} | Test Loss: {epoch_test_loss:.4f}")
+            print(f"Эпоха [{epoch + 1}/{epochs}] | Train Loss (MSE): {epoch_train_loss:.4f} | Test Loss (MSE): {epoch_test_loss:.4f}")
 
-    # Сохраняем гибрид в отдельный файл
     torch.save(model.state_dict(), 'dnd_hybrid_weights.pth')
 
     # ==========================================
@@ -190,11 +180,11 @@ def train_and_evaluate():
     os.makedirs("hybrid_report_plots", exist_ok=True)
 
     plt.figure()
-    plt.plot(range(1, epochs + 1), train_losses, label='Train Loss (BCE)', color='blue')
-    plt.plot(range(1, epochs + 1), test_losses, label='Test Loss (BCE)', color='red', linestyle='--')
-    plt.title('Гибридная Кривая Обучения', fontsize=14, fontweight='bold')
+    plt.plot(range(1, epochs + 1), train_losses, label='Train Loss (MSE)', color='blue')
+    plt.plot(range(1, epochs + 1), test_losses, label='Test Loss (MSE)', color='red', linestyle='--')
+    plt.title('Кривая обучения (Knowledge Distillation)', fontsize=14, fontweight='bold')
     plt.xlabel('Эпохи')
-    plt.ylabel('Loss')
+    plt.ylabel('Loss (MSE)')
     plt.legend()
     plt.savefig('hybrid_report_plots/1_hybrid_learning_curve.png', dpi=300)
     plt.close()
