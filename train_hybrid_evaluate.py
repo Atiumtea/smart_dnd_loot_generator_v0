@@ -102,9 +102,6 @@ def train_and_evaluate():
     with open('scaler_hybrid.pkl', 'wb') as f:
         pickle.dump(scaler, f)
 
-    # === ИСПРАВЛЕНИЕ: ПРОФЕССИОНАЛЬНЫЙ СЭМПЛИНГ ===
-    # Используем WeightedRandomSampler для балансировки синтетики и ручной разметки.
-    # Ручные примеры имеют вес в 50 раз больше, поэтому сеть будет учиться на них активнее.
     sample_weights = np.where(is_man_train == 1, 50.0, 1.0)
     sampler = WeightedRandomSampler(
         weights=sample_weights,
@@ -113,14 +110,11 @@ def train_and_evaluate():
     )
 
     train_dataset = DnDDataset(X_train_scaled, y_train)
-    # Передаем sampler вместо shuffle=True
     train_loader = DataLoader(train_dataset, batch_size=128, sampler=sampler)
     test_loader = DataLoader(DnDDataset(X_test_scaled, y_test), batch_size=128, shuffle=False)
 
     model = DnDItemRanker(input_size=15)
 
-    # === ИСПРАВЛЕНИЕ: МАТЕМАТИЧЕСКИ КОРРЕКТНЫЙ LOSS ===
-    # Для задачи регрессии (предсказание числа от 0.0 до 1.0) используем MSELoss.
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=0.003)
 

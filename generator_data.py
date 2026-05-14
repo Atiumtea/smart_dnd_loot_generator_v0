@@ -9,49 +9,49 @@ def smooth_normalize(score, midpoint=0.25, steepness=15):
     return 1 / (1 + math.exp(-steepness * (score - midpoint)))
 
 
-def calculate_target_y(location_score, party_score, story_importance, level_rarity_delta, is_duplicate, synergy_flag):
-    # 1. Плавная нелинейная нормализация
+def calculate_target_y(location_score, party_score, story_importance, level_rarity_delta, is_duplicate, synergy_flag,
+                       item_type_str):
     norm_loc = smooth_normalize(location_score)
     norm_party = smooth_normalize(party_score)
 
-    # 2. Базовая семантика
-    semantic_base = max(norm_loc, norm_party) * 0.7 + min(norm_loc, norm_party) * 0.3
+    # 1.
+    if norm_loc < 0.15:
+        semantic_base = min(norm_loc, norm_party)  # Берем худшее
+    else:
+        semantic_base = max(norm_loc, norm_party) * 0.7 + min(norm_loc, norm_party) * 0.3
 
-    # 3. Множитель важности
     y = semantic_base * (0.4 + 0.6 * story_importance)
 
-    # 4. Строгая синергия
+    # 2. Синергия
     if synergy_flag == 0:
         y *= 0.15
     else:
         y *= 1.1
 
-    # 5. Редкость (Delta) - ИСПРАВЛЕННАЯ НЕЛИНЕЙНАЯ ЛОГИКА
+    # 3. Нелинейная Редкость (Delta)
     if level_rarity_delta > 0:
         if level_rarity_delta == 1:
-            # +1 тир: Босс (imp=1) прощает это, рядовой бой (imp=0) жестко штрафует
-            penalty = 1.0 - (0.5 * (1.0 - story_importance))
-            y *= penalty
+            y *= 1.0 - (0.5 * (1.0 - story_importance))
         elif level_rarity_delta == 2:
-            # +2 тира: Перебор для любого этапа. Жестко режем шансы.
-            y *= 0.2 + (0.1 * story_importance)
+            y *= 0.15 + (0.1 * story_importance)
         else:
-            # +3 и +4 тира (Легендарка на 1-4 лвл): Математическое уничтожение таргета.
             y *= 0.01
 
     elif level_rarity_delta < 0:
-        # Штраф за мусор (слишком слабая вещь)
-        # Если это Босс (imp=1), мусор падать не должен -> жесткий штраф
-        penalty = 1.0 - (abs(level_rarity_delta) * 0.15 * story_importance)
-        y *= max(0.1, penalty)
+        base_penalty = abs(level_rarity_delta) * 0.25 * story_importance
+        # Если delta -3 или -4 на боссе, penalty будет > 0.75
+        y *= max(0.05, 1.0 - base_penalty)
 
-    # 6. Дубликаты
+    # 4. Умные Дубликаты (Расходники прощаются)
     if is_duplicate == 1.0:
-        y *= 0.1
+        consumables = ['potion', 'scroll']
+        if any(c in item_type_str.lower() for c in consumables):
+            y *= 0.8
+        else:
+            y *= 0.1
 
-    y += random.gauss(0, 0.02)  # Легкий шум
+    y += random.gauss(0, 0.02)
     return float(round(np.clip(y, 0.0, 1.0), 4))
-
 
 def generate_dnd_dataset(num_samples=25000):
     data = []
@@ -70,7 +70,7 @@ def generate_dnd_dataset(num_samples=25000):
         chosen_type = random.choice(ITEM_TYPES)
         syn = 1.0 if random.random() < 0.8 else 0.0
 
-        target = calculate_target_y(loc_s, par_s, imp, delta, is_dup, syn)
+        target = calculate_target_y(loc_s, par_s, imp, delta, is_dup, syn, chosen_type)
         type_ohe = get_type_ohe(chosen_type)
 
         row = {
