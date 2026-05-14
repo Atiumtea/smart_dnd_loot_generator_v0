@@ -213,8 +213,11 @@ def build_party_semantics(party_input_string: str) -> tuple[str, list[str]]:
 # 5. АРХИТЕКТУРА НЕЙРОСЕТИ
 # ==========================================
 class DnDItemRanker(nn.Module):
-    def __init__(self, input_size=15):
+    def __init__(self, input_size=None):
         super(DnDItemRanker, self).__init__()
+        if input_size is None:
+            input_size = 6 + len(ITEM_TYPES)
+
         self.network = nn.Sequential(
             nn.Linear(input_size, 32),
             nn.ReLU(),
