@@ -17,11 +17,6 @@ sns.set_theme(style="whitegrid")
 plt.rcParams['figure.figsize'] = (10, 6)
 
 # ==========================================
-# ⚙️ НАСТРОЙКИ ОБУЧЕНИЯ
-# ==========================================
-USE_SYNTHETIC = True
-
-# ==========================================
 # 1. ДАТАСЕТ
 # ==========================================
 class DnDDataset(Dataset):
@@ -36,10 +31,10 @@ class DnDDataset(Dataset):
         return self.X[idx], self.y[idx]
 
 # ==========================================
-# 2. ПОДГОТОВКА ГИБРИДНЫХ ДАННЫХ
+# 2. ПОДГОТОВКА ДАННЫХ
 # ==========================================
-def load_hybrid_data():
-    if USE_SYNTHETIC:
+def load_hybrid_data(use_synthetic):
+    if use_synthetic:
         print("📦 Загрузка синтетической базы (ВКЛЮЧЕНА)...")
         try:
             synth_df = pd.read_csv('dnd_mlp_training_data.csv', sep=';')
@@ -55,8 +50,8 @@ def load_hybrid_data():
         print("🧑‍🏫 Поиск ручной разметки Мастера...")
         gold_df = pd.read_csv('manual_gold_standard.csv', sep=';')
 
-        if len(gold_df) < 5 and not USE_SYNTHETIC:
-            print("❌ Слишком мало ручных данных для отключения синтетики! Аварийное завершение.")
+        if len(gold_df) < 5 and not use_synthetic:
+            print("❌ Слишком мало ручных данных для отключения синтетики (Нужно хотя бы 50+). Аварийное завершение.")
             exit()
 
         print(f"✨ Найдено {len(gold_df)} эталонных оценок.")
@@ -69,7 +64,7 @@ def load_hybrid_data():
         return final_df
 
     except FileNotFoundError:
-        if not USE_SYNTHETIC:
+        if not use_synthetic:
             print("❌ Ручной датасет не найден, а синтетика отключена. Не на чем учиться!")
             exit()
         return synth_df
@@ -77,8 +72,8 @@ def load_hybrid_data():
 # ==========================================
 # 3. ОСНОВНОЙ СКРИПТ ОБУЧЕНИЯ
 # ==========================================
-def train_and_evaluate():
-    df = load_hybrid_data()
+def train_and_evaluate(use_synthetic):
+    df = load_hybrid_data(use_synthetic)
 
     base_features = ['loc_score', 'party_score', 'story_importance', 'level_rarity_delta', 'is_duplicate', 'synergy_flag']
     type_features = [f'type_{t.replace(" ", "_")}' for t in ITEM_TYPES]
@@ -91,8 +86,10 @@ def train_and_evaluate():
     y = df['target_y'].values.astype(np.float32)
     is_manual = df['is_manual'].values.astype(int)
 
+    stratify_array = is_manual if len(np.unique(is_manual)) > 1 else None
+
     X_train, X_test, y_train, y_test, is_man_train, _ = train_test_split(
-        X, y, is_manual, test_size=0.15, random_state=42, stratify=is_manual
+        X, y, is_manual, test_size=0.15, random_state=42, stratify=stratify_array
     )
 
     scaler = StandardScaler()
@@ -102,26 +99,32 @@ def train_and_evaluate():
     with open('scaler_hybrid.pkl', 'wb') as f:
         pickle.dump(scaler, f)
 
-    sample_weights = np.where(is_man_train == 1, 50.0, 1.0)
-    sampler = WeightedRandomSampler(
-        weights=sample_weights,
-        num_samples=len(sample_weights),
-        replacement=True
-    )
-
     train_dataset = DnDDataset(X_train_scaled, y_train)
-    train_loader = DataLoader(train_dataset, batch_size=128, sampler=sampler)
+
+    # 🌟 АДАПТАЦИЯ 2: Умное переключение Сэмплера
+    if use_synthetic and len(np.unique(is_man_train)) > 1:
+        print("⚖️ Гибридный режим: включаю WeightedRandomSampler для балансировки...")
+        sample_weights = np.where(is_man_train == 1, 50.0, 1.0)
+        sampler = WeightedRandomSampler(
+            weights=sample_weights,
+            num_samples=len(sample_weights),
+            replacement=True
+        )
+        train_loader = DataLoader(train_dataset, batch_size=128, sampler=sampler)
+    else:
+        print("🔄 Моно-режим: использую стандартное перемешивание (Shuffle)...")
+        train_loader = DataLoader(train_dataset, batch_size=128, shuffle=True)
+
     test_loader = DataLoader(DnDDataset(X_test_scaled, y_test), batch_size=128, shuffle=False)
 
     model = DnDItemRanker(input_size=15)
-
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=0.003)
 
     epochs = 40
     train_losses, test_losses = [], []
 
-    print("\n🚀 Начало гибридного обучения (Knowledge Distillation)...")
+    print("\n🚀 Начало обучения...")
     for epoch in range(epochs):
         model.train()
         epoch_train_loss = 0.0
@@ -148,7 +151,8 @@ def train_and_evaluate():
         test_losses.append(epoch_test_loss)
 
         if (epoch + 1) % 5 == 0:
-            print(f"Эпоха [{epoch + 1}/{epochs}] | Train Loss (MSE): {epoch_train_loss:.4f} | Test Loss (MSE): {epoch_test_loss:.4f}")
+            print(
+                f"Эпоха [{epoch + 1}/{epochs}] | Train Loss (MSE): {epoch_train_loss:.4f} | Test Loss (MSE): {epoch_test_loss:.4f}")
 
     torch.save(model.state_dict(), 'dnd_hybrid_weights.pth')
 
@@ -164,7 +168,7 @@ def train_and_evaluate():
     r2 = r2_score(y_test, y_pred)
 
     print("\n" + "=" * 40)
-    print(" 📊 МЕТРИКИ ГИБРИДА ДЛЯ ОТЧЕТА ")
+    print(" 📊 МЕТРИКИ ДЛЯ ОТЧЕТА ")
     print("=" * 40)
     print(f"1. MSE: {mse:.4f}")
     print(f"2. MAE: {mae:.4f}")
@@ -186,14 +190,14 @@ def train_and_evaluate():
     plt.figure()
     plt.scatter(y_test, y_pred, alpha=0.3, color='green', s=10)
     plt.plot([0, 1], [0, 1], color='red', linestyle='--', linewidth=2)
-    plt.title('Гибрид: Предсказания vs Смешанная Реальность', fontsize=14, fontweight='bold')
+    plt.title('Предсказания vs Реальность', fontsize=14, fontweight='bold')
     plt.xlabel('Реальный Target Y')
     plt.ylabel('Предсказание Модели')
     plt.savefig('hybrid_report_plots/2_hybrid_predictions.png', dpi=300)
     plt.close()
 
     plt.figure()
-    sns.histplot(y_pred, bins=50, kde=True, color='purple', stat="density", label='Предсказания Гибрида')
+    sns.histplot(y_pred, bins=50, kde=True, color='purple', stat="density", label='Предсказания Модели')
     sns.histplot(y_test, bins=50, kde=True, color='orange', stat="density", alpha=0.4, label='Реальные данные')
     plt.title('Распределение предсказаний vs реальность', fontsize=14, fontweight='bold')
     plt.xlabel('Скор (Probability)')
@@ -201,5 +205,15 @@ def train_and_evaluate():
     plt.savefig('hybrid_report_plots/3_hybrid_distribution.png', dpi=300)
     plt.close()
 
+
 if __name__ == "__main__":
-    train_and_evaluate()
+    print("\n" + "=" * 50)
+    print(" 🧠 НАСТРОЙКА ОБУЧЕНИЯ ")
+    print("=" * 50)
+    print("1 - Гибридный режим (Синтетика + Ручная разметка) [По умолчанию]")
+    print("2 - Моно-режим (ТОЛЬКО Ручная разметка)")
+
+    choice = input("\nВаш выбор (1/2): ").strip()
+    use_synthetic_flag = False if choice == '2' else True
+
+    train_and_evaluate(use_synthetic=use_synthetic_flag)
