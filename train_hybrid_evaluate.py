@@ -132,6 +132,7 @@ def train_and_evaluate(use_synthetic):
 
     epochs = 40
     train_losses, test_losses = [], []
+    best_test_loss = float('inf')
 
     print("\n🚀 Начало обучения...")
     for epoch in range(epochs):
@@ -159,11 +160,18 @@ def train_and_evaluate(use_synthetic):
         epoch_test_loss /= len(test_loader.dataset)
         test_losses.append(epoch_test_loss)
 
-        if (epoch + 1) % 5 == 0:
-            print(
-                f"Эпоха [{epoch + 1}/{epochs}] | Train Loss (MSE): {epoch_train_loss:.4f} | Test Loss (MSE): {epoch_test_loss:.4f}")
+        if epoch_test_loss < best_test_loss:
+            best_test_loss = epoch_test_loss
+            torch.save(model.state_dict(), 'dnd_hybrid_weights.pth')
+            is_best = "⭐"
+        else:
+            is_best = ""
 
-    torch.save(model.state_dict(), 'dnd_hybrid_weights.pth')
+        if (epoch + 1) % 5 == 0 or is_best:
+            print(
+                f"Эпоха [{epoch + 1}/{epochs}] | Train MSE: {epoch_train_loss:.4f} | Test MSE: {epoch_test_loss:.4f} {is_best}")
+
+    model.load_state_dict(torch.load('dnd_hybrid_weights.pth', weights_only=True))
 
     # ==========================================
     # 4. АНАЛИТИКА
