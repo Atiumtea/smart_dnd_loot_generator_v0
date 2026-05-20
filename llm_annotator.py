@@ -64,67 +64,69 @@ def generate_dynamic_scenario():
     return {"loc": loc, "party": party, "level": level, "imp": imp}
 
 
-def ask_llm_auditor(scen, item, l_s, p_s, delta, syn, i_type, max_retries=5):
+def ask_llm_auditor(scen, item, l_s, p_s, delta, syn, i_type, is_dup, max_retries=5):
     prompt = f"""
-    Ты — опытный Dungeon Master в D&D 5e и ИИ-аудитор датасета.
-    Оцени, насколько этот предмет подходит как лут для текущей сцены.
-    Выведи ответ строго в формате JSON, содержащем два ключа: "reason" (строка, краткое обоснование на русском) и "score" (float от 0.000 до 1.000).
-    
+    Ты — ИИ-аудитор. Оцени предмет для лута (от 0.000 до 1.000).
+    ОТВЕТ ДОЛЖЕН БЫТЬ СТРОГО JSON.
+    ПРАВИЛО: Поле "score" должно содержать ТОЛЬКО ЧИСЛО (float). НИКАКИХ ФОРМУЛ, СЛОЖЕНИЙ ИЛИ ТЕКСТА В ПОЛЕ SCORE.
+    Выполняй расчеты внутри, но выдавай только готовый результат.
+
     ДАННЫЕ:
-    - Предмет: {item['name']} ({item.get('rarity', 'common')}, {i_type})
-    - Описание: {str(item.get('description', ''))[:400]}...
+    - Предмет: {item['name']} (Редкость: {item.get('rarity', 'common')}, Тип: {i_type})
     - Локация: {scen['loc']}
     - Группа: {scen['party']} (Уровень {scen['level']})
-    - Важность битвы: {scen['imp']:.2f} (Где 1.0 - эпичный босс, 0.1 - случайная стычка)
+    - Важность: {scen['imp']:.2f}
+    - Метрики: Loc={l_s}, Party={p_s}, Delta={delta}, Synergy={syn}, Is_Duplicate={is_dup}
 
-    ОСНОВНЫЕ МЕТРИКИ (ДЛЯ ОРИЕНТИРА):
-    - Loc Score: {l_s} (Тематичность. >0.3 - хорошая связь, <0.15 - случайный мусор)
-    - Party Score: {p_s} (Полезность. >0.3 - очень полезно, <0.15 - вряд ли пригодится)
-    - Delta: {delta} (Разница редкости предмета и уровня группы)
-    - Synergy: {syn} (1.0 = есть кому экипировать, 0.0 = предмет бесполезен классам)
+    РУКОВОДСТВО ПО ОЦЕНКЕ:
+    1. КРИТИЧЕСКИЕ ШТРАФЫ (Score 0.000-0.150):
+       - Delta >= 2.
+       - Synergy == 0.0.
+       - Loc < 0.15 И Party < 0.15.
+       - Is_Duplicate == 1.0, при условии что тип предмета НЕ 'potion' и НЕ 'scroll'. Игрокам не нужны два одинаковых магических меча!
+    2. ОГРАНИЧЕНИЕ ВЕЛИКОГО ЛУТА (Artifact / Legendary):
+       - Если редкость "artifact", Score может быть выше 0.250 ТОЛЬКО при Важности > 0.90.
+       - Если редкость "legendary", Score может быть выше 0.350 ТОЛЬКО при Важности > 0.80.
+       - Это правило перекрывает хорошие метрики! Великие вещи не лежат в обычных сундуках, даже на 20 уровне.
+    3. ОГРАНИЧЕНИЕ ПРЕВЫШЕНИЯ УРОВНЯ:
+       - Если Delta == 1 и Важность < 0.70 -> Score 0.050-0.150.
+    4. ИДЕАЛЬНЫЙ ЛУТ (Score 0.800-1.000):
+       - Все проверки пройдены, Loc>0.35, Party>0.35, Delta=0, Synergy=1.0.
+    5. СИТУАТИВНЫЙ ЛУТ (Score 0.300-0.600):
+       - Подходит только локации ИЛИ только партии.
 
-    РУКОВОДСТВО МАСТЕРА ПО ОЦЕНКЕ (ГИБКАЯ ЛОГИКА):
-    1. ЖЕСТКИЕ ЗАПРЕТЫ (Критический слом баланса или логики, Score 0.000 - 0.150):
-       - Разница уровней (Delta) >= 2. Нельзя давать легендарки новичкам.
-       - Синергия (Synergy) == 0.0. Предмет вообще некому использовать.
-       - Полный мисс: (Loc Score < 0.15 И Party Score < 0.15).
-    2. БАЛАНС РЕДКОСТИ И ВАЖНОСТИ БОЯ:
-       - Если Delta == 1 (предмет круче нормы), он уместен ТОЛЬКО если Важность битвы > 0.70. Иначе сильно штрафуй.
-       - Если Delta < 0 (слабый предмет), это нормально для мелких стычек (Важность < 0.5), но сильно разочарует после босса (Важность > 0.8).
-    3. СИТУАТИВНЫЙ ЛУТ (Score 0.300 - 0.600):
-       - Предмет идеально ложится в лор локации (Loc Score > 0.35), но не очень нужен группе (Party Score низкий). Это отличный "атмосферный" лут.
-       - Предмет нужен группе (Party Score > 0.35), но не вписывается в локацию.
-    4. ЗОЛОТАЯ СЕРЕДИНА И ИДЕАЛ (Score 0.600 - 1.000):
-       - Оба скора (Loc и Party) в пределах 0.2 - 0.35, Delta == 0 -> Крепкая, хорошая награда.
-       - Оба скора высокие (>0.35), Delta == 0, Synergy == 1.0 -> Безупречный лут.
+    Выведи JSON: {{"reason": "краткое объяснение", "score": 0.5}}
     """
 
     for attempt in range(max_retries):
         try:
             chat_completion = client.chat.completions.create(
                 messages=[
-                    {"role": "system", "content": "You are a helpful assistant that outputs JSON."},
+                    {"role": "system",
+                     "content": "You are a data auditor. Output ONLY valid JSON. score field must be a number."},
                     {"role": "user", "content": prompt}
                 ],
                 model=MODEL_NAME,
-                temperature=0.3,
+                temperature=0.1,
                 response_format={"type": "json_object"}
             )
 
-            result = json.loads(chat_completion.choices[0].message.content)
-            return float(result.get("score", 0.3)), result.get("reason", "No reason provided")
+            content = chat_completion.choices[0].message.content
+            result = json.loads(content)
+
+            score = float(result.get("score", 0.3))
+            reason = result.get("reason", "No reason provided")
+
+            return score, reason
 
         except Exception as e:
             error_msg = str(e)
             if "429" in error_msg or "rate_limit" in error_msg.lower():
-                # Groq обычно ругается на токены в минуту (TPM). Ждем 10-15 сек.
-                wait_time = 12.0 * (attempt + 1)
-                console.print(f"[yellow]⏳ Лимит Groq API (429). Ждем {wait_time:.1f} сек...[/yellow]")
-                time.sleep(wait_time)
+                time.sleep(15.0 * (attempt + 1))
             else:
-                return None, f"Ошибка: {error_msg}"
+                return None, f"Ошибка парсинга или API: {error_msg}. Ответ: {content if 'content' in locals() else 'None'}"
 
-    return None, "Превышено количество попыток из-за лимитов API."
+    return None, "Превышено количество попыток."
 
 
 # --- ЗАГРУЗКА ---
@@ -176,7 +178,8 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
         p_s = round(p_scores[idx].item(), 4)
         exp_r = get_expected_rarity(scen['level'])
         delta = get_rarity_val(item['rarity'], exp_r) - exp_r
-        is_dup = 0.0
+
+        is_dup = 1.0 if random.random() < 0.05 else 0.0
 
         i_type = str(item.get('type', 'wondrous item')).lower()
         type_ohe = get_type_ohe(i_type)
@@ -187,8 +190,7 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
                 syn = 1.0;
                 break
 
-        # --- ЗАПРОС К GROQ ---
-        score, reason = ask_llm_auditor(scen, item, l_s, p_s, delta, syn, i_type)
+        score, reason = ask_llm_auditor(scen, item, l_s, p_s, delta, syn, i_type, is_dup)
 
         if score is None:
             progress.console.print(f"[red]⚠️ Пропуск: {reason}[/red]")
