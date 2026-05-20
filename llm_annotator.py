@@ -59,77 +59,47 @@ def generate_dynamic_scenario():
 
 
 def normalize_for_llm(ml_score, max_expected=0.45):
-    """
-    Переводит косинусное расстояние (обычно от 0.0 до 0.45)
-    в понятную для LLM 10-балльную шкалу.
-    """
+    """Переводит косинусное расстояние в понятную для LLM шкалу от 1.0 до 10.0"""
     normalized = (ml_score / max_expected) * 10.0
     return min(10.0, max(0.1, round(normalized, 1)))
 
 
-def ask_llm_auditor(scen, item, l_s, p_s, delta, syn, i_type, is_dup, max_retries=5):
-    rarity_clean = str(item.get('rarity', 'common')).lower()
+def ask_llm_auditor(scen, item, l_s_10, p_s_10, delta, max_retries=5):
+    """
+    Вызывается ТОЛЬКО если предмет прошел хард-фильтры Python.
+    Промпт сфокусирован исключительно на оценке лора и ролевой уместности.
+    """
 
-    # === 1. ПОДГОТОВКА ИДЕАЛЬНО ЧИСТЫХ ДАННЫХ ДЛЯ LLM ===
-
-    # Транслируем ML-скоры в 10-балльную шкалу
-    l_s_10 = normalize_for_llm(l_s)
-    p_s_10 = normalize_for_llm(p_s)
-
-    # Текстовые флаги
-    is_dup_text = "ДА" if is_dup == 1.0 else "НЕТ"
-    syn_text = "ДА (есть кому носить)" if syn == 1.0 else "НЕТ (бесполезно для классов)"
-    consumable_text = "ДА" if any(c in i_type for c in ['potion', 'scroll']) else "НЕТ"
-
-    # Форматирование баланса
     if delta == 0:
-        delta_text = "НОРМА (Соответствует уровню)"
-    elif delta > 0:
-        delta_text = f"СИЛЬНЕЕ (На {delta} тира ВЫШЕ нормы)"
+        delta_text = "НОРМА (Идеально для их уровня)"
+    elif delta == 1:
+        delta_text = "ЧУТЬ СИЛЬНЕЕ (Отличная редкая награда)"
     else:
-        delta_text = f"СЛАБЕЕ (На {abs(delta)} тира НИЖЕ нормы)"
+        delta_text = f"СЛАБЕЕ (На {abs(delta)} тира ниже нормы)"
 
-    # === 2. СИСТЕМНЫЙ ПРОМПТ (Строгая и понятная логика) ===
-    system_prompt = """Ты — строгий Data-Аудитор датасета для D&D 5e.
-Твоя задача — оценить полезность лута (score от 0.000 до 1.000).
-ОТВЕТ СТРОГО В ФОРМАТЕ JSON: {"reasoning": "...", "score": 0.000}. Сначала пиши reasoning!
+    system_prompt = """Ты — опытный Dungeon Master. Твоя задача — оценить качество лута (Score от 0.150 до 1.000).
+ВНИМАНИЕ: Предмет УЖЕ прошел все системные проверки на баланс и правила. Он полностью легален для выдачи.
+Твоя задача — оценить только его СЮЖЕТНУЮ УМЕСТНОСТЬ и РОЛЕВУЮ ПОЛЕЗНОСТЬ.
 
-МЕТРИКИ УМЕСТНОСТИ:
-Оценки "Совпадение с Локацией" и "Совпадение с Партией" даны по шкале от 1.0 до 10.0. (Где 10.0 — абсолютный идеал).
+МЕТРИКИ:
+Программа предоставляет тебе баллы "Совпадения" от 1.0 до 10.0. Опирайся на них при оценке.
 
-ОБЯЗАТЕЛЬНЫЕ ПРАВИЛА ШТРАФОВ (Перекрывают любые хорошие оценки):
-1. ЛЕГЕНДАРКИ И АРТЕФАКТЫ НЕ К МЕСТУ: 
-   - Если редкость "artifact" и Важность события < 0.90 -> Выдай оценку от 0.010 до 0.050.
-   - Если редкость "legendary" и Важность события < 0.80 -> Выдай оценку от 0.020 до 0.060.
-2. БЕСПОЛЕЗНЫЕ ДУБЛИКАТЫ: 
-   - Если "Уже есть: ДА" и "Расходник: НЕТ" -> Оценка от 0.050 до 0.120.
-3. СЛОМАННЫЙ БАЛАНС: 
-   - Если параметр Баланса содержит "На 2 тира ВЫШЕ" (или больше) -> Предмет слишком сильный, он ломает игру. Оценка от 0.050 до 0.150.
-4. НЕТ СИНЕРГИИ: 
-   - Если "Синергия: НЕТ" -> Оценка от 0.050 до 0.150.
+КРИТЕРИИ ОЦЕНКИ:
+- Идеальный лут (0.800 - 1.000): Совпадение с Локацией И Партией высокое (от 7.0 до 10.0). Предмет идеально ложится в историю.
+- Хороший лут (0.500 - 0.799): Одно из совпадений среднее (4.0 - 6.9). Предмет полезен, но лор не идеален, или наоборот.
+- Средний/Слабый лут (0.150 - 0.499): Совпадения низкие (ниже 4.0) ИЛИ предмет заметно "СЛАБЕЕ" нормы по уровню (игрокам он будет скучен).
 
-ПРАВИЛА ПЛАВНОЙ ОЦЕНКИ (Если штрафов нет):
-Формируй финальный Score плавно, опираясь на баллы (1-10) и баланс уровня.
-- Идеальный лут (0.800 - 0.990): Локация и Партия от 8.0 до 10.0, Баланс - НОРМА.
-- Хороший лут (0.500 - 0.799): Баланс - НОРМА, Локация и Партия в диапазоне 5.0 - 7.9.
-- Средний/Ситуативный лут (0.250 - 0.499): Локация и Партия от 3.0 до 4.9, либо предмет "СЛАБЕЕ" нормы.
-- Мусор (0.100 - 0.249): Совпадение ниже 3.0.
-"""
+ОТВЕТ СТРОГО В JSON: {"reasoning": "Кратко объясни почему", "score": 0.000}"""
 
-    # === 3. ПОЛЬЗОВАТЕЛЬСКИЙ ПРОМПТ (Синхронизирован с системным) ===
-    user_prompt = f"""ДАННЫЕ О СИТУАЦИИ:
-- Предмет: {item['name']}
-- Тип: {i_type}
-- Редкость: {rarity_clean}
-- Уровень группы: {scen['level']}
-- Важность события (0.0 - 1.0): {scen['imp']:.2f}
-- Уже есть в инвентаре: {is_dup_text} (Расходник: {consumable_text})
-- Синергия с классами группы: {syn_text}
-- Баланс уровня: {delta_text}
-- Совпадение с Локацией (1-10): {l_s_10:.1f} / 10.0
-- Совпадение с Партией (1-10): {p_s_10:.1f} / 10.0
+    user_prompt = f"""ДАННЫЕ:
+- Предмет: {item['name']} (Тип: {item['type']}, Редкость: {item['rarity']})
+- Локация: {scen['loc']}
+- Состав партии (Ур. {scen['level']}): {scen['party']}
+- Баланс предмета: {delta_text}
+- Совпадение с Локацией: {l_s_10:.1f} / 10.0
+- Совпадение с Партией: {p_s_10:.1f} / 10.0
 
-Проведи оценку строго по правилам. Выдай JSON."""
+Выдай оценку в JSON."""
 
     for attempt in range(max_retries):
         try:
@@ -142,35 +112,27 @@ def ask_llm_auditor(scen, item, l_s, p_s, delta, syn, i_type, is_dup, max_retrie
                 temperature=0.1,
                 response_format={"type": "json_object"}
             )
-
             content = chat_completion.choices[0].message.content
-
             try:
                 result = json.loads(content)
             except json.JSONDecodeError:
                 match = re.search(r'\{.*\}', content, re.DOTALL)
-                result = json.loads(match.group(0)) if match else {"score": 0.1, "reasoning": "Parse error"}
+                result = json.loads(match.group(0)) if match else {"score": 0.3, "reasoning": "Parse error"}
 
-            score = float(result.get("score", 0.1))
-            reason = result.get("reasoning", "No reason provided")
-
-            return score, reason
-
+            return float(result.get("score", 0.3)), result.get("reasoning", "No reason provided")
         except Exception as e:
             error_msg = str(e).lower()
-            if any(code in error_msg for code in ["429", "rate_limit", "timeout", "503", "502"]):
+            if any(code in error_msg for code in ["429", "rate_limit", "timeout", "503", "502", "failed_generation"]):
                 wait_time = 15.0 * (attempt + 1)
-                console.print(
-                    f"[yellow]⏳ Лимит Groq. Ждем {wait_time} сек... (Попытка {attempt + 1}/{max_retries})[/yellow]")
+                console.print(f"[yellow]⏳ Задержка API. Ждем {wait_time} сек... (Попытка {attempt + 1})[/yellow]")
                 time.sleep(wait_time)
             else:
                 return None, f"Ошибка API: {str(e)}"
-
-    return None, "Превышено количество попыток достучаться до сервера Groq."
+    return None, "Timeout."
 
 
 # --- ЗАГРУЗКА ---
-console.print("[bold green]Загрузка локальных ИИ-компонентов...[/bold green]")
+console.print("[bold green]Загрузка ИИ-компонентов и векторной базы...[/bold green]")
 encoder = SentenceTransformer('all-MiniLM-L6-v2')
 kb = pd.read_pickle('dnd_knowledge_base.pkl')
 kb_emb = torch.tensor(np.stack(kb['embedding'].values))
@@ -190,14 +152,12 @@ if not os.path.exists(GOLD_FILE):
 else:
     total_annotated = len(pd.read_csv(GOLD_FILE, sep=';'))
 
-console.print(f"\n[bold cyan]🚀 АВТОРАЗМЕТКА ЗАПУЩЕНА (В базе уже: {total_annotated})[/bold cyan]")
-console.print("Нажмите [bold red]Ctrl+C[/bold red] для остановки.\n")
-
-target_samples = int(console.input("Сколько примеров сгенерировать за эту сессию? (Например, 5000): "))
+console.print(f"\n[bold cyan]🚀 ГИБРИДНАЯ РАЗМЕТКА ЗАПУЩЕНА (В базе: {total_annotated})[/bold cyan]")
+target_samples = int(console.input("Сколько примеров сгенерировать? (Например, 5000): "))
 
 success_count = 0
 with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as progress:
-    task = progress.add_task("[yellow]Генерация и оценка...", total=target_samples)
+    task = progress.add_task("[yellow]Генерация датасета...", total=target_samples)
 
     while success_count < target_samples:
         scen = generate_dynamic_scenario()
@@ -217,7 +177,9 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
         l_s = round(l_scores[idx].item(), 4)
         p_s = round(p_scores[idx].item(), 4)
         exp_r = get_expected_rarity(scen['level'])
-        delta = get_rarity_val(item['rarity'], exp_r) - exp_r
+
+        rarity_str = str(item.get('rarity', 'common')).lower()
+        delta = get_rarity_val(rarity_str, exp_r) - exp_r
 
         is_dup = 1.0 if random.random() < 0.05 else 0.0
         i_type = str(item.get('type', 'wondrous item')).lower()
@@ -229,17 +191,53 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
                 syn = 1.0;
                 break
 
-        score, reason = ask_llm_auditor(scen, item, l_s, p_s, delta, syn, i_type, is_dup)
+        # ==========================================
+        # АРХИТЕКТУРНЫЙ ПРОРЫВ: PYTHON GATEKEEPER
+        # ==========================================
+        is_hard_penalty = False
+        hard_score = 0.0
+        reason = ""
+        is_consumable = any(c in i_type for c in ['potion', 'scroll'])
 
-        if score is None:
-            progress.console.print(f"[red]⚠️ Пропуск: {reason}[/red]")
-            time.sleep(3)
-            continue
+        if 'artifact' in rarity_str and scen['imp'] < 0.90:
+            is_hard_penalty, hard_score, reason = True, random.uniform(0.010,
+                                                                       0.050), "[PYTHON] Артефакт не подходит по Важности."
+        elif 'legendary' in rarity_str and scen['imp'] < 0.80:
+            is_hard_penalty, hard_score, reason = True, random.uniform(0.020,
+                                                                       0.060), "[PYTHON] Легендарка не подходит по Важности."
+        elif delta >= 2:
+            is_hard_penalty, hard_score, reason = True, random.uniform(0.050,
+                                                                       0.150), f"[PYTHON] Слом баланса (Дельта {delta})."
+        elif syn == 0.0:
+            is_hard_penalty, hard_score, reason = True, random.uniform(0.050,
+                                                                       0.150), "[PYTHON] Нет синергии с классами."
+        elif is_dup == 1.0 and not is_consumable:
+            is_hard_penalty, hard_score, reason = True, random.uniform(0.050, 0.120), "[PYTHON] Бесполезный дубликат."
 
-        # Плавный микро-шум
-        noise = random.gauss(0, 0.015)
-        target_y = max(0.001, min(1.0, round(score + noise, 4)))
+        # ==========================================
+        # МАРШРУТИЗАЦИЯ (ROUTING)
+        # ==========================================
+        if is_hard_penalty:
+            # LLM не вызывается! Экономим ресурсы.
+            target_y = round(hard_score, 4)
+        else:
+            # Вызываем LLM только для хороших предметов
+            l_s_10 = normalize_for_llm(l_s)
+            p_s_10 = normalize_for_llm(p_s)
 
+            score, llm_reason = ask_llm_auditor(scen, item, l_s_10, p_s_10, delta)
+
+            if score is None:
+                progress.console.print(f"[red]⚠️ Пропуск: {llm_reason}[/red]")
+                time.sleep(3)
+                continue
+
+            noise = random.gauss(0, 0.015)
+            target_y = max(0.150, min(1.0, round(score + noise, 4)))  # Защита порога
+            reason = f"[AI] {llm_reason}"
+            time.sleep(1.5)  # Пауза только если дергали API
+
+        # Сохранение в базу
         row_dict = {
             'item_name': item['name'], 'location_text': scen['loc'], 'party_text': scen['party'],
             'loc_score': l_s, 'party_score': p_s, 'story_importance': scen['imp'],
@@ -250,15 +248,15 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
 
         pd.DataFrame([row_dict]).to_csv(GOLD_FILE, mode='a', header=False, index=False, sep=';')
 
-        # Вывод рассуждений для контроля
+        # Визуализация логов (Цвет зависит от того, кто принял решение)
+        color = "magenta" if "[PYTHON]" in reason else "green"
         progress.console.print(
             f"[dim]Лут:[/dim] [cyan]{item['name'][:25]:<25}[/cyan] | "
-            f"[white]Y: {target_y:.4f}[/white] (raw L: {l_s:.3f}, P: {p_s:.3f}) | "
-            f"\n[italic green]Логика ИИ: {reason}[/italic green]\n"
+            f"[white]Y: {target_y:.4f}[/white] | "
+            f"\n[italic {color}]{reason}[/italic {color}]\n"
         )
 
         success_count += 1
         progress.update(task, advance=1)
-        time.sleep(2.5)
 
 console.print("\n[bold green]✅ Сессия разметки завершена![/bold green]")
