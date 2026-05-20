@@ -20,7 +20,7 @@ import chromadb.errors
 from sentence_transformers import SentenceTransformer, util
 
 from models import (
-    DnDItemRanker, CLASS_SYNERGY, get_type_ohe, TERRAIN, ATMOSPHERE,
+    DnDItemRanker, CLASS_SYNERGY, get_type_ohe, PLANES, TERRAIN, ATMOSPHERE,
     ENEMY_FACTIONS, ENEMY_ACTIONS, build_party_semantics, CLASS_LORE,
     get_expected_rarity, get_rarity_val
 )
@@ -252,7 +252,8 @@ if __name__ == "__main__":
             console.print("[bold red]⚠️ Ошибка: Вводите только числа![/bold red]")
             continue
 
-        dyn_loc = f"{random.choice(TERRAIN)}, {random.choice(ATMOSPHERE)}, {random.choice(ENEMY_FACTIONS)}, {random.choice(ENEMY_ACTIONS)}"
+        terrain_str = f"{random.choice(TERRAIN)}, {random.choice(PLANES)}" if random.random() < 0.2 else random.choice(TERRAIN)
+        loc = f"{terrain_str}, {random.choice(ATMOSPHERE)}, {random.choice(ENEMY_FACTIONS)}, {random.choice(ENEMY_ACTIONS)}"
         console.print(f"[bold yellow]🗺️  ЛОКАЦИЯ[/bold yellow] [dim](Например: {dyn_loc}):[/dim]")
         loc_input = console.input("   [bold]>[/bold] ")
 

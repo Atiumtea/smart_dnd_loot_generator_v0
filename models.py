@@ -149,6 +149,12 @@ TERRAIN = [
     "underground cavern", "ruined temple", "floating island", "tavern basement"
 ]
 
+PLANES = [
+    "Astral Plane silver void", "Feywild enchanted forest", "Shadowfell domain of dread",
+    "Nine Hells fiery battlefield", "City of Brass in the Elemental Plane of Fire",
+    "Endless layers of the Abyss", "Mechanus clockwork gears", "Limbo chaotic storm"
+]
+
 ATMOSPHERE = [
     "thick fog", "heavy rain", "pitch black", "cobwebs and dust",
     "smell of sulfur", "glowing arcane runes", "howling blizzard",

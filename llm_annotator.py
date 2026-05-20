@@ -14,9 +14,12 @@ from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.panel import Panel
 
-# Импортируем нашу логику
+from dotenv import load_dotenv
+load_dotenv()
+API_KEY = os.environ.get("GEMINI_API_KEY")
+
 from models import (
-    ITEM_TYPES, CLASS_SYNERGY, get_type_ohe, CLASS_LORE, TERRAIN, ATMOSPHERE,
+    ITEM_TYPES, CLASS_SYNERGY, get_type_ohe, CLASS_LORE, PLANES, TERRAIN, ATMOSPHERE,
     ENEMY_FACTIONS, ENEMY_ACTIONS, build_party_semantics, get_expected_rarity, get_rarity_val
 )
 
@@ -28,36 +31,22 @@ warnings.filterwarnings("ignore")
 
 console = Console()
 
-# --- ДОПОЛНИТЕЛЬНЫЕ МЕЖПЛАНАРНЫЕ СЕТТИНГИ ---
-PLANES = [
-    "Astral Plane silver void", "Feywild enchanted forest", "Shadowfell domain of dread",
-    "Nine Hells fiery battlefield", "City of Brass in the Elemental Plane of Fire",
-    "Endless layers of the Abyss", "Mechanus clockwork gears", "Limbo chaotic storm"
-]
-EXTENDED_TERRAIN = TERRAIN + PLANES
-
 # --- НАСТРОЙКА GEMINI API ---
 API_KEY = os.environ.get("GEMINI_API_KEY")
 if not API_KEY:
     console.print("[bold red]ОШИБКА: Не найден ключ API![/bold red]")
-    console.print(
-        "Установите его в терминале: [cyan]set GEMINI_API_KEY=твой_ключ[/cyan] (Windows) или [cyan]export GEMINI_API_KEY=твой_ключ[/cyan] (Mac/Linux)")
     exit()
 
 genai.configure(api_key=API_KEY)
 
-# Используем быструю и дешевую модель, настраиваем её на возврат строгого JSON
 model = genai.GenerativeModel(
     'gemini-2.5-flash',
     generation_config={"response_mime_type": "application/json"}
 )
 
-
 def generate_dynamic_scenario():
-    # 20% шанс, что нас закинет в межпланарное приключение
-    terrain_choice = random.choice(EXTENDED_TERRAIN)
-    loc = f"{terrain_choice}, {random.choice(ATMOSPHERE)}, {random.choice(ENEMY_FACTIONS)}, {random.choice(ENEMY_ACTIONS)}"
-
+    terrain_str = f"{random.choice(TERRAIN)}, {random.choice(PLANES)}" if random.random() < 0.2 else random.choice(TERRAIN)
+    loc = f"{terrain_str}, {random.choice(ATMOSPHERE)}, {random.choice(ENEMY_FACTIONS)}, {random.choice(ENEMY_ACTIONS)}"
     party_size = random.randint(3, 5)
     party_members = []
     base_classes_list = list(CLASS_LORE.keys())
@@ -146,7 +135,6 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
         l_scores = util.cos_sim(l_emb, kb_emb)[0]
         p_scores = util.cos_sim(p_emb, kb_emb)[0]
 
-        # Иногда берем идеальный предмет, иногда полный рандом для обучения штрафам
         combined = (l_scores + p_scores) / 2.0
         idx = torch.topk(combined, k=random.randint(1, 15)).indices[
             -1].item() if random.random() > 0.3 else random.randint(0, len(kb) - 1)
@@ -187,7 +175,6 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
 
         pd.DataFrame([row_dict]).to_csv(GOLD_FILE, mode='a', header=False, index=False, sep=';')
 
-        # Красивый вывод того, что ИИ только что решил
         progress.console.print(
             f"[dim]Добавлено:[/dim] [cyan]{item['name'][:20]}[/cyan] | "
             f"[white]Оценка: {score}/10[/white] | "
