@@ -248,12 +248,12 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
 
         pd.DataFrame([row_dict]).to_csv(GOLD_FILE, mode='a', header=False, index=False, sep=';')
 
-        # Визуализация логов (Цвет зависит от того, кто принял решение)
         color = "magenta" if "[PYTHON]" in reason else "green"
         progress.console.print(
             f"[dim]Лут:[/dim] [cyan]{item['name'][:25]:<25}[/cyan] | "
-            f"[white]Y: {target_y:.4f}[/white] | "
-            f"\n[italic {color}]{reason}[/italic {color}]\n"
+            f"[bold white]Y: {target_y:.4f}[/bold white] | "
+            f"[dim]L: {l_s:.3f} | P: {p_s:.3f} | D: {delta} | Imp: {scen['imp']:.2f}[/dim]\n"
+            f"[italic {color}]{reason}[/italic {color}]\n"
         )
 
         success_count += 1
