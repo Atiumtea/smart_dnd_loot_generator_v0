@@ -39,8 +39,8 @@ if not API_KEY:
     console.print("[bold red]ОШИБКА: Не найден ключ GROQ_API_KEY в файле .env![/bold red]")
     exit()
 
-# Инициализируем клиента Groq
-client = Groq(api_key=API_KEY)
+# Задаем жесткий таймаут в 30 секунд, чтобы скрипт не висел бесконечно
+client = Groq(api_key=API_KEY, timeout=30.0)
 MODEL_NAME = "llama-3.1-8b-instant"
 
 
@@ -65,37 +65,58 @@ def generate_dynamic_scenario():
 
 
 def ask_llm_auditor(scen, item, l_s, p_s, delta, syn, i_type, is_dup, max_retries=5):
+    # Приводим редкость к нижнему регистру для точного совпадения
+    rarity_clean = str(item.get('rarity', 'common')).lower()
+
     prompt = f"""
-    Ты — ИИ-аудитор. Оцени предмет для лута (от 0.000 до 1.000).
-    ОТВЕТ ДОЛЖЕН БЫТЬ СТРОГО JSON.
-    ПРАВИЛО: Поле "score" должно содержать ТОЛЬКО ЧИСЛО (float). НИКАКИХ ФОРМУЛ, СЛОЖЕНИЙ ИЛИ ТЕКСТА В ПОЛЕ SCORE.
-    Выполняй расчеты внутри, но выдавай только готовый результат.
+    Ты — строгий алгоритм-аудитор датасета для D&D 5e.
+    Твоя задача — вычислить оценку полезности предмета (score от 0.000 до 1.000).
+    ОТВЕТ СТРОГО В ФОРМАТЕ JSON. Никаких формул или рассуждений вне поля "reason".
 
-    ДАННЫЕ:
-    - Предмет: {item['name']} (Редкость: {item.get('rarity', 'common')}, Тип: {i_type})
-    - Локация: {scen['loc']}
-    - Группа: {scen['party']} (Уровень {scen['level']})
-    - Важность: {scen['imp']:.2f}
-    - Метрики: Loc={l_s}, Party={p_s}, Delta={delta}, Synergy={syn}, Is_Duplicate={is_dup}
+    ВХОДНЫЕ ДАННЫЕ (Используй только эти цифры для сравнения):
+    - Предмет: {item['name']} (Редкость: {rarity_clean}, Тип: {i_type})
+    - Loc Score (l_s): {l_s}
+    - Party Score (p_s): {p_s}
+    - Delta: {delta}
+    - Synergy: {syn}
+    - Is_Duplicate: {is_dup}
+    - Важность боя (imp): {scen['imp']:.2f}
 
-    РУКОВОДСТВО ПО ОЦЕНКЕ:
-    1. КРИТИЧЕСКИЕ ШТРАФЫ (Score 0.000-0.150):
-       - Delta >= 2.
-       - Synergy == 0.0.
-       - Loc < 0.15 И Party < 0.15.
-       - Is_Duplicate == 1.0, при условии что тип предмета НЕ 'potion' и НЕ 'scroll'. Игрокам не нужны два одинаковых магических меча!
-    2. ОГРАНИЧЕНИЕ ВЕЛИКОГО ЛУТА (Artifact / Legendary):
-       - Если редкость "artifact", Score может быть выше 0.250 ТОЛЬКО при Важности > 0.90.
-       - Если редкость "legendary", Score может быть выше 0.350 ТОЛЬКО при Важности > 0.80.
-       - Это правило перекрывает хорошие метрики! Великие вещи не лежат в обычных сундуках, даже на 20 уровне.
-    3. ОГРАНИЧЕНИЕ ПРЕВЫШЕНИЯ УРОВНЯ:
-       - Если Delta == 1 и Важность < 0.70 -> Score 0.050-0.150.
-    4. ИДЕАЛЬНЫЙ ЛУТ (Score 0.800-1.000):
-       - Все проверки пройдены, Loc>0.35, Party>0.35, Delta=0, Synergy=1.0.
-    5. СИТУАТИВНЫЙ ЛУТ (Score 0.300-0.600):
-       - Подходит только локации ИЛИ только партии.
+    ПОШАГОВЫЙ АЛГОРИТМ ОЦЕНКИ (ВЫПОЛНЯЙ СТРОГО СВЕРХУ ВНИЗ):
 
-    Выведи JSON: {{"reason": "краткое объяснение", "score": 0.5}}
+    ШАГ 1: КРИТИЧЕСКИЕ ШТРАФЫ (Если ДА -> score от 0.000 до 0.150. Дальше не считай)
+    - ЕСЛИ Delta >= 2 -> Слишком сильный.
+    - ЕСЛИ Synergy == 0.0 -> Некому использовать.
+    - ЕСЛИ l_s < 0.15 И p_s < 0.15 -> Полный мусор.
+    - ЕСЛИ Is_Duplicate == 1.0 И Тип предмета НЕ 'potion' И НЕ 'scroll' -> Бесполезный дубликат.
+
+    ШАГ 2: БЛОКИРОВКА ЛЕГЕНДАРОК И АРТЕФАКТОВ (Перекрывает хорошие метрики)
+    - ЕСЛИ Редкость содержит слово "artifact" И Важность (imp) < 0.90 -> Штраф! score от 0.000 до 0.200.
+    - ЕСЛИ Редкость содержит слово "legendary" И Важность (imp) < 0.80 -> Штраф! score от 0.000 до 0.250.
+    - ЕСЛИ Delta == 1 И Важность (imp) < 0.70 -> Предмет слишком крут для рядового боя. score от 0.050 до 0.150.
+
+    ШАГ 3: ИДЕАЛЬНЫЙ ЛУТ (ЕСЛИ НЕТ ШТРАФОВ ИЗ ШАГОВ 1 И 2)
+    - ЕСЛИ l_s >= 0.30 И p_s >= 0.30 И Delta == 0 И Synergy == 1.0 -> Безупречно. score от 0.850 до 1.000.
+
+    ШАГ 4: ХОРОШИЙ ЛУТ
+    - ЕСЛИ l_s >= 0.20 И p_s >= 0.20 И Delta == 0 И Synergy == 1.0 -> Крепкая награда. score от 0.600 до 0.800.
+
+    ШАГ 5: СИТУАТИВНЫЙ / АТМОСФЕРНЫЙ ЛУТ
+    - ЕСЛИ l_s >= 0.30 И p_s < 0.20 -> Очень атмосферно, но не нужно группе. score от 0.300 до 0.500.
+    - ЕСЛИ p_s >= 0.30 И l_s < 0.20 -> Очень нужно группе, но ломает лор локации. score от 0.300 до 0.500.
+
+    ШАГ 6: СЛАБЫЙ ЛУТ
+    - ЕСЛИ Delta < 0 -> Предмет слабее уровня группы. score от 0.200 до 0.400.
+
+    ШАГ 7: ЕСЛИ НИЧЕГО НЕ ПОДОШЛО
+    - Оценивай от 0.250 до 0.450.
+
+    ФОРМАТ ОТВЕТА (ПРИМЕР):
+    {{
+      "reason": "Шаг 1: Synergy == 0.0, предмет бесполезен для классов группы.",
+      "score": 0.115
+    }}
+    (ВНИМАНИЕ: Не копируй цифру 0.115 из примера! Сгенерируй свою цифру согласно шагам алгоритма).
     """
 
     for attempt in range(max_retries):
@@ -103,11 +124,11 @@ def ask_llm_auditor(scen, item, l_s, p_s, delta, syn, i_type, is_dup, max_retrie
             chat_completion = client.chat.completions.create(
                 messages=[
                     {"role": "system",
-                     "content": "You are a data auditor. Output ONLY valid JSON. score field must be a number."},
+                     "content": "You are a strict data auditor. Evaluate inputs using the provided algorithm steps. Output ONLY valid JSON with 'reason' and 'score' (float)."},
                     {"role": "user", "content": prompt}
                 ],
                 model=MODEL_NAME,
-                temperature=0.1,
+                temperature=0.1,  # Низкая температура обязательна для следования алгоритму
                 response_format={"type": "json_object"}
             )
 
@@ -119,14 +140,17 @@ def ask_llm_auditor(scen, item, l_s, p_s, delta, syn, i_type, is_dup, max_retrie
 
             return score, reason
 
-        except Exception as e:
-            error_msg = str(e)
-            if "429" in error_msg or "rate_limit" in error_msg.lower():
-                time.sleep(15.0 * (attempt + 1))
-            else:
-                return None, f"Ошибка парсинга или API: {error_msg}. Ответ: {content if 'content' in locals() else 'None'}"
 
-    return None, "Превышено количество попыток."
+        except Exception as e:
+            error_msg = str(e).lower()
+            if "429" in error_msg or "rate_limit" in error_msg or "timeout" in error_msg or "503" in error_msg or "502" in error_msg:
+                wait_time = 15.0 * (attempt + 1)
+                console.print(f"[yellow]⏳ Задержка сервера (Таймаут/Лимит). Ждем {wait_time} сек... (Попытка {attempt + 1}/{max_retries})[/yellow]")
+                time.sleep(wait_time)
+            else:
+                return None, f"Ошибка API: {str(e)}"
+
+        return None, "Превышено количество попыток достучаться до сервера Groq."
 
 
 # --- ЗАГРУЗКА ---
