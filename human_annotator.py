@@ -61,6 +61,9 @@ cols = base_cols + type_cols
 
 if not os.path.exists(GOLD_FILE):
     pd.DataFrame(columns=cols).to_csv(GOLD_FILE, index=False, sep=';')
+    total_annotated = 0
+else:
+    total_annotated = len(pd.read_csv(GOLD_FILE, sep=';'))
 
 print("\n" + "=" * 60)
 print(" 🤖 АННОТАТОР ДАННЫХ 🤖")
@@ -185,4 +188,7 @@ while True:
         row_dict[f'type_{t.replace(" ", "_")}'] = type_ohe[i]
 
     pd.DataFrame([row_dict]).to_csv(GOLD_FILE, mode='a', header=False, index=False, sep=';')
-    print(f"✅ Сохранено (Таргет: {target_y})")
+
+    total_annotated += 1
+    console.print(
+        f"[bold green]✅ Сохранено (Таргет: {target_y})[/bold green] [dim]| 💾 Размечено предметов в датасете: {total_annotated}[/dim]")
