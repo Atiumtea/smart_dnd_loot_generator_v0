@@ -9,14 +9,16 @@ import numpy as np
 import torch
 import re
 from sentence_transformers import SentenceTransformer, util
-import google.generativeai as genai
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.panel import Panel
 
+# НОВАЯ БИБЛИОТЕКА
+from groq import Groq
+
 from dotenv import load_dotenv
+
 load_dotenv()
-API_KEY = os.environ.get("GEMINI_API_KEY")
 
 from models import (
     ITEM_TYPES, CLASS_SYNERGY, get_type_ohe, CLASS_LORE, PLANES, TERRAIN, ATMOSPHERE,
@@ -31,21 +33,21 @@ warnings.filterwarnings("ignore")
 
 console = Console()
 
-# --- НАСТРОЙКА GEMINI API ---
-API_KEY = os.environ.get("GEMINI_API_KEY")
+# --- НАСТРОЙКА GROQ API ---
+API_KEY = os.environ.get("GROQ_API_KEY")
 if not API_KEY:
-    console.print("[bold red]ОШИБКА: Не найден ключ API![/bold red]")
+    console.print("[bold red]ОШИБКА: Не найден ключ GROQ_API_KEY в файле .env![/bold red]")
     exit()
 
-genai.configure(api_key=API_KEY)
+# Инициализируем клиента Groq
+client = Groq(api_key=API_KEY)
+# Используем быструю модель Llama 3 8B
+MODEL_NAME = "llama3-8b-8192"
 
-model = genai.GenerativeModel(
-    'gemini-2.5-flash',
-    generation_config={"response_mime_type": "application/json"}
-)
 
 def generate_dynamic_scenario():
-    terrain_str = f"{random.choice(TERRAIN)}, {random.choice(PLANES)}" if random.random() < 0.2 else random.choice(TERRAIN)
+    terrain_str = f"{random.choice(TERRAIN)}, {random.choice(PLANES)}" if random.random() < 0.2 else random.choice(
+        TERRAIN)
     loc = f"{terrain_str}, {random.choice(ATMOSPHERE)}, {random.choice(ENEMY_FACTIONS)}, {random.choice(ENEMY_ACTIONS)}"
     party_size = random.randint(3, 5)
     party_members = []
@@ -58,7 +60,7 @@ def generate_dynamic_scenario():
 
     party = ", ".join(party_members)
     level = random.randint(1, 20)
-    imp = round(random.betavariate(2, 5), 2)  # Чаще выдает значения ближе к 0.3-0.5, но бывают и боссы (1.0)
+    imp = round(random.betavariate(2, 5), 2)
 
     return {"loc": loc, "party": party, "level": level, "imp": imp}
 
@@ -67,7 +69,7 @@ def ask_llm_auditor(scen, item, l_s, p_s, delta, syn, i_type, max_retries=5):
     prompt = f"""
     Ты — опытный Dungeon Master в D&D 5e и ИИ-аудитор датасета.
     Оцени, насколько этот предмет подходит как лут для текущей сцены.
-    Ответ строго в JSON: "reason" (строка, краткое обоснование на русском) и "score" (float от 0.000 до 1.000).
+    Выведи ответ строго в формате JSON, содержащем два ключа: "reason" (строка, краткое обоснование на русском) и "score" (float от 0.000 до 1.000).
 
     ДАННЫЕ:
     - Предмет: {item['name']} ({item.get('rarity', 'common')}, {i_type})
@@ -100,27 +102,37 @@ def ask_llm_auditor(scen, item, l_s, p_s, delta, syn, i_type, max_retries=5):
 
     for attempt in range(max_retries):
         try:
-            response = model.generate_content(prompt)
-            result = json.loads(response.text)
-            return float(result.get("score", 0.3)), result.get("reason", "No reason provided")
+            chat_completion = client.chat.completions.create(
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a helpful assistant that outputs JSON."
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                model=MODEL_NAME,
+                temperature=0.3,  # Делаем ответы более предсказуемыми
+                response_format={"type": "json_object"}  # Гарантия JSON
+            )
 
+            result = json.loads(chat_completion.choices[0].message.content)
+            return float(result.get("score", 0.3)), result.get("reason", "No reason provided")
 
         except Exception as e:
             error_msg = str(e)
-
-            if "429" in error_msg or "Quota" in error_msg:
-                match = re.search(r'retry in (\d+\.?\d*)s', error_msg)
-                if match:
-                    wait_time = float(match.group(1)) + 2.0
-                else:
-                    wait_time = 61.0
-
-                console.print(f"[yellow]⏳ Лимит API. Ждем {wait_time:.1f} сек...[/yellow] [dim]({error_msg[:60]}...)[/dim]")
+            if "429" in error_msg or "rate_limit" in error_msg.lower():
+                # Groq обычно ругается на токены в минуту (TPM). Ждем 10-15 сек.
+                wait_time = 12.0 * (attempt + 1)
+                console.print(f"[yellow]⏳ Лимит Groq API (429). Ждем {wait_time:.1f} сек...[/yellow]")
                 time.sleep(wait_time)
             else:
-                return None, f"Ошибка API: {error_msg}"
+                return None, f"Ошибка: {error_msg}"
 
     return None, "Превышено количество попыток из-за лимитов API."
+
 
 # --- ЗАГРУЗКА ---
 console.print("[bold green]Загрузка локальных ИИ-компонентов...[/bold green]")
@@ -143,10 +155,10 @@ if not os.path.exists(GOLD_FILE):
 else:
     total_annotated = len(pd.read_csv(GOLD_FILE, sep=';'))
 
-console.print(f"\n[bold cyan]🚀 LLM-АВТОРАЗМЕТКА ЗАПУЩЕНА (В базе уже: {total_annotated})[/bold cyan]")
+console.print(f"\n[bold cyan]🚀 GROQ LLM-АВТОРАЗМЕТКА ЗАПУЩЕНА (В базе уже: {total_annotated})[/bold cyan]")
 console.print("Нажмите [bold red]Ctrl+C[/bold red] в любой момент, чтобы остановить процесс.\n")
 
-target_samples = int(console.input("Сколько примеров сгенерировать за эту сессию? (Например, 500): "))
+target_samples = int(console.input("Сколько примеров сгенерировать за эту сессию? (Например, 5000): "))
 
 success_count = 0
 with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as progress:
@@ -182,12 +194,12 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
                 syn = 1.0;
                 break
 
-        # --- ЗАПРОС К GEMINI ---
+        # --- ЗАПРОС К GROQ ---
         score, reason = ask_llm_auditor(scen, item, l_s, p_s, delta, syn, i_type)
 
         if score is None:
             progress.console.print(f"[red]⚠️ Пропуск: {reason}[/red]")
-            time.sleep(5)  # Ждем, если API ругается на лимиты
+            time.sleep(3)
             continue
 
         target_y = max(0.0, min(1.0, round(score, 4)))
@@ -211,6 +223,8 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
         success_count += 1
         progress.update(task, advance=1)
 
-        time.sleep(5)
+        # Пауза для Groq (у них лимит 30 запросов в минуту или 14.4k токенов в минуту на Free)
+        # 2-3 секунды обычно хватает, чтобы не превышать лимит Токенов В Минуту (TPM)
+        time.sleep(2.5)
 
 console.print("\n[bold green]✅ Сессия разметки завершена![/bold green]")
