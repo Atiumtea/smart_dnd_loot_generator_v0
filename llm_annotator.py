@@ -208,6 +208,9 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
         elif delta >= 2:
             is_hard_penalty, hard_score, reason = True, random.uniform(0.050,
                                                                        0.150), f"[PYTHON] Слом баланса (Дельта {delta})."
+        elif delta <= -3:
+            is_hard_penalty, hard_score, reason = True, random.uniform(0.050,
+                                                                       0.120), f"[PYTHON] Слишком слабо для группы (Дельта {delta})."
         elif syn == 0.0:
             is_hard_penalty, hard_score, reason = True, random.uniform(0.050,
                                                                        0.150), "[PYTHON] Нет синергии с классами."
@@ -233,7 +236,7 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
                 continue
 
             noise = random.gauss(0, 0.015)
-            target_y = max(0.150, min(1.0, round(score + noise, 4)))  # Защита порога
+            target_y = max(0.001, min(1.0, round(score + noise, 4)))
             reason = f"[AI] {llm_reason}"
             time.sleep(1.5)  # Пауза только если дергали API
 
