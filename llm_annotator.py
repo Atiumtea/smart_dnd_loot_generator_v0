@@ -41,8 +41,7 @@ if not API_KEY:
 
 # Инициализируем клиента Groq
 client = Groq(api_key=API_KEY)
-# Используем быструю модель Llama 3 8B
-MODEL_NAME = "llama3-8b-8192"
+MODEL_NAME = "llama-3.1-8b-instant"
 
 
 def generate_dynamic_scenario():
@@ -70,7 +69,7 @@ def ask_llm_auditor(scen, item, l_s, p_s, delta, syn, i_type, max_retries=5):
     Ты — опытный Dungeon Master в D&D 5e и ИИ-аудитор датасета.
     Оцени, насколько этот предмет подходит как лут для текущей сцены.
     Выведи ответ строго в формате JSON, содержащем два ключа: "reason" (строка, краткое обоснование на русском) и "score" (float от 0.000 до 1.000).
-
+    
     ДАННЫЕ:
     - Предмет: {item['name']} ({item.get('rarity', 'common')}, {i_type})
     - Описание: {str(item.get('description', ''))[:400]}...
@@ -104,18 +103,12 @@ def ask_llm_auditor(scen, item, l_s, p_s, delta, syn, i_type, max_retries=5):
         try:
             chat_completion = client.chat.completions.create(
                 messages=[
-                    {
-                        "role": "system",
-                        "content": "You are a helpful assistant that outputs JSON."
-                    },
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
+                    {"role": "system", "content": "You are a helpful assistant that outputs JSON."},
+                    {"role": "user", "content": prompt}
                 ],
                 model=MODEL_NAME,
-                temperature=0.3,  # Делаем ответы более предсказуемыми
-                response_format={"type": "json_object"}  # Гарантия JSON
+                temperature=0.3,
+                response_format={"type": "json_object"}
             )
 
             result = json.loads(chat_completion.choices[0].message.content)
