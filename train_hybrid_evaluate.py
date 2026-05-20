@@ -56,7 +56,7 @@ def load_hybrid_data(use_synthetic):
 
     try:
         print("🧑‍🏫 Поиск ручной разметки Мастера...")
-        gold_df = pd.read_csv('manual_gold_standard.csv', sep=';')
+        gold_df = pd.read_csv('llm_gold_standard.csv', sep=';')
 
         if len(gold_df) < 5 and not use_synthetic:
             print("❌ Слишком мало ручных данных для отключения синтетики (Нужно хотя бы 50+). Аварийное завершение.")
