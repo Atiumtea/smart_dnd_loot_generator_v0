@@ -22,7 +22,7 @@ from sentence_transformers import SentenceTransformer, util
 from models import (
     DnDItemRanker, CLASS_SYNERGY, get_type_ohe, TERRAIN, ATMOSPHERE,
     ENEMY_FACTIONS, ENEMY_ACTIONS, build_party_semantics, CLASS_LORE,
-    get_expected_rarity_for_level, get_rarity_val
+    get_expected_rarity, get_rarity_val
 )
 
 os.environ['TRANSFORMERS_VERBOSITY'] = 'error'
@@ -152,7 +152,7 @@ class SmartLootGenerator:
 
         features_list = []
         candidates = []
-        expected_rarity = get_expected_rarity_for_level(party_level)
+        expected_rarity = get_expected_rarity(party_level)
 
         for i, (doc_id, item) in enumerate(unique_candidates.items()):
             l_score = loc_scores_raw[i].item()

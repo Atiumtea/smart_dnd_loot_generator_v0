@@ -16,7 +16,7 @@ from sentence_transformers import SentenceTransformer, util
 from generator_data import calculate_target_y
 from models import (
     ITEM_TYPES, CLASS_SYNERGY, get_type_ohe, CLASS_LORE, TERRAIN, ATMOSPHERE, ENEMY_FACTIONS, \
-    ENEMY_ACTIONS, build_party_semantics, get_rarity_val
+    ENEMY_ACTIONS, build_party_semantics, get_rarity_val, get_expected_rarity
 )
 
 os.environ['TRANSFORMERS_VERBOSITY'] = 'error'

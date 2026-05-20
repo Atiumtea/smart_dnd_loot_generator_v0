@@ -234,7 +234,7 @@ class DnDItemRanker(nn.Module):
 # ==========================================
 # 6. УТИЛИТЫ ДЛЯ РЕДКОСТИ
 # ==========================================
-def get_expected_rarity_for_level(level: int) -> int:
+def get_expected_rarity(level: int) -> int:
     if level <= 4: return 2
     elif level <= 10: return 3
     elif level <= 16: return 4
