@@ -255,7 +255,6 @@ def get_rarity_val(rarity_str: str, party_level: int = 1) -> int:
     return 1
 
 def get_tier_brackets(rarity_val: int) -> tuple[int, int]:
-    """Возвращает (min_level, max_level) актуальности предмета на основе твоего маппинга."""
     mapping = {
         1: (1, 3),    # Common
         2: (1, 3),    # Uncommon
@@ -267,11 +266,6 @@ def get_tier_brackets(rarity_val: int) -> tuple[int, int]:
     return mapping.get(rarity_val, (1, 3))
 
 def calculate_level_delta(item_rarity_val: int, party_level: int) -> int:
-    """
-    > 0: Предмет опережает развитие группы (Слишком сильный).
-    < 0: Предмет отстал от группы (Слишком слабый/Мусорный).
-    == 0: Предмет находится в своем актуальном диапазоне уровней.
-    """
     min_lvl, max_lvl = get_tier_brackets(item_rarity_val)
     if party_level < min_lvl:
         return min_lvl - party_level

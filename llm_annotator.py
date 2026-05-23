@@ -73,71 +73,118 @@ def ask_llm_auditor(scen, item, l_s_10, p_s_10, delta, max_retries=5):
     # === ДИНАМИЧЕСКИЙ КОНТЕКСТ БАЛАНСА И ВАЖНОСТИ ===
     if delta == 0:
         delta_text = "НОРМА (Идеальный баланс для их уровня)"
-    elif delta == 1:
-        if scen['imp'] >= 0.70:
-            delta_text = "ЧУТЬ СИЛЬНЕЕ (Отличная и заслуженная награда за важный бой)"
-        elif scen['imp'] >= 0.50:
-            delta_text = "ЧУТЬ СИЛЬНЕЕ (Слегка крутовато для рядового события, но допустимо)"
-        else:
-            delta_text = "СИЛЬНЕЕ НОРМЫ (Слишком ценная награда для пустякового события! Снижай оценку)"
-    else:
-        if scen['imp'] >= 0.70:
-            delta_text = f"СЛАБЕЕ (На {abs(delta)} тира ниже нормы. Разочаровывающий мусор для эпичного события! Снижай оценку)"
-        else:
-            delta_text = f"СЛАБЕЕ (На {abs(delta)} тира ниже нормы. Игрокам будет скучновато)"
-
-    system_prompt = """Ты — опытный Dungeon Master. Твоя задача — оценить качество лута (Score от 0.150 до 0.990).
-ВНИМАНИЕ: Предмет УЖЕ прошел все системные проверки на баланс и правила. Он полностью легален для выдачи.
-Твоя задача — оценить только его СЮЖЕТНУЮ УМЕСТНОСТЬ и РОЛЕВУЮ ПОЛЕЗНОСТЬ.
-
-МЕТРИКИ:
-Программа предоставляет тебе баллы "Совпадения" от 1.0 до 10.0. Опирайся на них при оценке.
-
-КРИТЕРИИ ОЦЕНКИ:
-- Идеальный лут (0.800 - 0.990): Совпадение с Локацией И Партией высокое (от 7.0 до 10.0). Баланс идеален или заслужен.
-- Хороший лут (0.500 - 0.799): Одно из совпадений среднее (4.0 - 6.9). Предмет полезен.
-- Средний/Слабый лут (0.150 - 0.499): Совпадения низкие (ниже 4.0) ИЛИ Баланс содержит прямое указание "Снижай оценку".
-
-ОТВЕТ СТРОГО В JSON (где score это число строго от 0.150 до 0.990): {"reasoning": "...", "score": 0.300}"""
-
-    user_prompt = f"""ДАННЫЕ:
-- Предмет: {item['name']} (Тип: {item['type']}, Редкость: {item['rarity']})
-- Локация: {scen['loc']}
-- Состав партии (Ур. {scen['level']}): {scen['party']}
-- Баланс предмета: {delta_text}
-- Совпадение с Локацией: {l_s_10:.1f} / 10.0
-- Совпадение с Партией: {p_s_10:.1f} / 10.0
-
-Выдай оценку в JSON."""
-
-    for attempt in range(max_retries):
-        try:
-            chat_completion = client.chat.completions.create(
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                model=MODEL_NAME,
-                temperature=0.1,
-                response_format={"type": "json_object"}
-            )
-            content = chat_completion.choices[0].message.content
-            try:
-                result = json.loads(content)
-            except json.JSONDecodeError:
-                match = re.search(r'\{.*\}', content, re.DOTALL)
-                result = json.loads(match.group(0)) if match else {"score": 0.3, "reasoning": "Parse error"}
-
-            return float(result.get("score", 0.3)), result.get("reasoning", "No reason provided")
-        except Exception as e:
-            error_msg = str(e).lower()
-            if any(code in error_msg for code in ["429", "rate_limit", "timeout", "503", "502", "failed_generation"]):
-                wait_time = 15.0 * (attempt + 1)
-                console.print(f"[yellow]⏳ Задержка API. Ждем {wait_time} сек... (Попытка {attempt + 1})[/yellow]")
-                time.sleep(wait_time)
+    elif delta > 0:
+        if delta <= 4:  # Аналог старого "На 1 тир выше"
+            if scen['imp'] >= 0.70:
+                delta_text = f"ЧУТЬ СИЛЬНЕЕ (На {delta} ур. выше. Отличная и заслуженная награда за важный бой)"
+            elif scen['imp'] >= 0.50:
+                delta_text = f"ЧУТЬ СИЛЬНЕЕ (На {delta} ур. выше. Слегка крутовато для рядового события, но допустимо)"
             else:
-                return None, f"Ошибка API: {str(e)}"
-    return None, "Timeout."
+                delta_text = f"СИЛЬНЕЕ НОРМЫ (На {delta} ур. выше. Слишком ценная награда для пустякового события! Снижай оценку)"
+        else:  # delta >= 5 (Аналог старого "На 2+ тира выше")
+            delta_text = f"СЛИШКОМ СИЛЬНОЕ (На {delta} ур. выше. Серьезно ломает баланс. Строго снижай оценку)"
+    else:  # delta < 0
+        abs_d = abs(delta)
+        if scen['imp'] >= 0.70:
+            delta_text = f"СЛАБЕЕ (На {abs_d} ур. ниже нормы. Разочаровывающий мусор для эпичного события! Снижай оценку)"
+        else:
+            delta_text = f"СЛАБЕЕ (На {abs_d} ур. ниже нормы. Игрокам будет скучновато)"
+
+    def ask_llm_auditor(scen, item, l_s_10, p_s_10, delta, max_retries=5):
+        """
+        Вызывается ТОЛЬКО если предмет прошел хард-фильтры Python.
+        Промпт сфокусирован исключительно на оценке лора и ролевой уместности.
+        """
+
+        # === ДИНАМИЧЕСКИЙ КОНТЕКСТ (Переведен на Английский для LLM) ===
+        if delta == 0:
+            delta_text = "NORMAL (Ideal balance for their level)"
+        elif delta > 0:
+            if delta <= 4:
+                if scen['imp'] >= 0.70:
+                    delta_text = f"SLIGHTLY STRONGER ({delta} levels higher. Well-deserved reward for a major battle)"
+                elif scen['imp'] >= 0.50:
+                    delta_text = f"SLIGHTLY STRONGER ({delta} levels higher. Acceptable for this event)"
+                else:
+                    delta_text = f"STRONGER THAN NORMAL ({delta} levels higher. Too valuable for a minor event! STRICTLY REDUCE SCORE)"
+            else:
+                delta_text = f"TOO STRONG ({delta} levels higher. STRICTLY REDUCE SCORE)"
+        else:
+            abs_d = abs(delta)
+            if scen['imp'] >= 0.70:
+                delta_text = f"WEAKER ({abs_d} levels lower. Disappointing loot for a major event! STRICTLY REDUCE SCORE)"
+            else:
+                delta_text = f"WEAKER ({abs_d} levels lower. Players might find it boring)"
+
+        system_prompt = """You are a Data Auditor and an experienced Dungeon Master for D&D 5e.
+    ATTENTION: The item has ALREADY passed strict systemic checks for game-breaking issues. It is legal to drop.
+    Your task is to provide a final evaluation (Score from 0.150 to 0.990) based ONLY on NARRATIVE APPROPRIATENESS, ROLEPLAY UTILITY, and BALANCE.
+
+    METRICS:
+    The program provides you with "Match" scores from 1.0 to 10.0. Rely on them.
+
+    EVALUATION RULES (STRICT):
+    1. Read the "Item Balance" field carefully. If it says "STRICTLY REDUCE SCORE" in all caps, you MUST penalize the item and output a Score between 0.150 and 0.450, even if Location and Party matches are 10.0!
+    2. Ideal loot (0.800 - 0.990): Location AND Party matches >= 7.0. Balance is NORMAL or "Well-deserved reward".
+    3. Good loot (0.500 - 0.799): One of the matches is >= 5.0. Balance is acceptable.
+    4. Average/Weak loot (0.150 - 0.499): Matches are < 5.0 OR Balance requires a score reduction.
+
+    OUTPUT STRICTLY IN JSON FORMAT:
+    {
+      "loc_analysis": "Brief analysis of how the item fits the location",
+      "party_analysis": "Brief analysis of how the item fits the party classes",
+      "balance_check": "Analyze the Balance field (if it says reduce score, confirm the penalty here)",
+      "score": <float_number_from_0.150_to_0.990>
+    }"""
+
+        user_prompt = f"""DATA:
+    - Item: {item['name']} (Type: {item['type']}, Rarity: {item['rarity']})
+    - Location: {scen['loc']}
+    - Party Composition (Level {scen['level']}): {scen['party']}
+    - Item Balance: {delta_text}
+    - Location Match: {l_s_10:.1f} / 10.0
+    - Party Match: {p_s_10:.1f} / 10.0
+
+    Perform the analysis and output JSON."""
+
+        for attempt in range(max_retries):
+            try:
+                chat_completion = client.chat.completions.create(
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    model=MODEL_NAME,
+                    temperature=0.0,
+                    response_format={"type": "json_object"}
+                )
+                content = chat_completion.choices[0].message.content
+                try:
+                    result = json.loads(content)
+                except json.JSONDecodeError:
+                    match = re.search(r'\{.*\}', content, re.DOTALL)
+                    result = json.loads(match.group(0)) if match else {"score": 0.3}
+
+                score = float(result.get("score", 0.3))
+
+                llm_reason = (
+                    f"Loc: {result.get('loc_analysis', '')} | "
+                    f"Party: {result.get('party_analysis', '')} | "
+                    f"Bal: {result.get('balance_check', 'No data')}"
+                )
+
+                return score, llm_reason
+
+            except Exception as e:
+                error_msg = str(e).lower()
+                if any(code in error_msg for code in
+                       ["429", "rate_limit", "timeout", "503", "502", "failed_generation"]):
+                    wait_time = 15.0 * (attempt + 1)
+                    console.print(f"[yellow]⏳ Задержка API. Ждем {wait_time} сек... (Попытка {attempt + 1})[/yellow]")
+                    time.sleep(wait_time)
+                else:
+                    return None, f"Ошибка API: {str(e)}"
+        return None, "Timeout."
 
 
 # --- ЗАГРУЗКА ---
@@ -188,10 +235,8 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
 
         rarity_str = str(item.get('rarity', 'common')).lower()
         rarity_val = get_rarity_val(rarity_str, scen['level'])
-        item_expected_level = get_min_level_for_rarity(rarity_val)
 
-        # ДЕЛЬТА ТЕПЕРЬ В УРОВНЯХ: На сколько уровней предмет обгоняет (+) или отстает (-) от партии
-        delta = item_expected_level - scen['level']
+        delta = calculate_level_delta(rarity_val, scen['level'])
 
         is_dup = 1.0 if random.random() < 0.05 else 0.0
         i_type = str(item.get('type', 'wondrous item')).lower()
@@ -206,7 +251,6 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
         # ==========================================
         # НЕПРЕРЫВНЫЙ PYTHON GATEKEEPER
         # ==========================================
-        is_hard_penalty = False
         penalty_multiplier = 1.0
         reason_parts = []
         is_consumable = any(c in i_type for c in ['potion', 'scroll'])
@@ -216,30 +260,31 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
         base_quality = (norm_l + norm_p) / 2.0
 
         if 'artifact' in rarity_str and scen['imp'] < 0.85:
-            mult = max(0.1, scen['imp'] / 0.85)
-            penalty_multiplier *= mult
-            reason_parts.append(f"[PYTHON] Артефакт (Важность {scen['imp']:.2f})")
+            penalty_multiplier *= 0.10
+            reason_parts.append(f"[PYTHON] Артефакт в рядовом бою (Imp {scen['imp']:.2f})")
 
         elif 'legendary' in rarity_str and scen['imp'] < 0.75:
-            mult = max(0.15, scen['imp'] / 0.75)
-            penalty_multiplier *= mult
-            reason_parts.append(f"[PYTHON] Легендарка (Важность {scen['imp']:.2f})")
+            penalty_multiplier *= 0.20
+            reason_parts.append(f"[PYTHON] Легендарка в рядовом бою (Imp {scen['imp']:.2f})")
 
-        # --- ИСПРАВЛЕННАЯ ЛОГИКА ДЕЛЬТЫ (МЯГКАЯ И ЗАВИСИМАЯ ОТ ВАЖНОСТИ) ---
+        elif 'very rare' in rarity_str and scen['imp'] < 0.50:
+            penalty_multiplier *= 0.40  # Умеренный штраф для "очень редких"
+            reason_parts.append(f"[PYTHON] Очень редкий лут не к месту (Imp {scen['imp']:.2f})")
+
         if delta > 0:
-            # Плавный штраф за опережение в уровне.
-            # delta**1.5 дает прогрессию (дельта 1 = 1, дельта 2 = 2.8, дельта 5 = 11.1)
-            # (1.1 - imp)**2 сильно ослабляет штраф при высокой важности (imp -> 1.0)
-            severity = (delta ** 1.5) * ((1.1 - scen['imp']) ** 2)
-            multiplier = 1.0 / (1.0 + severity * 2.0)
+            severity_base = (delta / 2.0) ** 2.5
+            importance_forgiveness = max(0.1, 1.1 - scen['imp'])
+            severity = severity_base * importance_forgiveness
+            multiplier = 1.0 / (1.0 + severity)
             penalty_multiplier *= multiplier
             reason_parts.append(f"[PYTHON] Рано на {delta} ур.")
 
         elif delta < 0:
-            # Плавный штраф за мусорный лут для высокоуровневых партий
-            # Чем выше важность боя, тем обиднее получать слабый лут
             abs_d = abs(delta)
-            severity = (abs_d / 5.0) * (0.5 + scen['imp'])
+            normalized_abs_d = abs_d / 5.0
+
+            severity = (normalized_abs_d ** 2.5) * (0.2 + scen['imp'] ** 2)
+
             multiplier = 1.0 / (1.0 + severity)
             penalty_multiplier *= multiplier
             reason_parts.append(f"[PYTHON] Поздно на {abs_d} ур.")
@@ -249,20 +294,17 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
             reason_parts.append("[PYTHON] Нет синергии")
 
         if is_dup == 1.0 and not is_consumable:
-            penalty_multiplier *= 0.20  # Оставляем 20% от качества для бесполезного дубликата
+            penalty_multiplier *= 0.20
             reason_parts.append("[PYTHON] Дубликат")
 
-        # 3. Маршрутизация: экономим API, если штрафов накопилось достаточно много
         is_hard_penalty = (penalty_multiplier < 0.50)
 
         # ==========================================
         # МАРШРУТИЗАЦИЯ (ROUTING)
         # ==========================================
         if is_hard_penalty:
-            # ИТОГ: Теперь целевой Y не константа! Он зависит от ВСЕХ входных параметров,
-            # и нейросети придется выучить сложную нелинейную формулу.
             hard_score = base_quality * penalty_multiplier
-            hard_score += random.gauss(0, 0.005)  # Микро-шум для дисперсии
+            hard_score += random.gauss(0, 0.005)
             target_y = round(max(0.001, min(0.999, hard_score)), 4)
             reason = " + ".join(reason_parts)
         else:
