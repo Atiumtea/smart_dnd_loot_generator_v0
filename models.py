@@ -238,22 +238,44 @@ class DnDItemRanker(nn.Module):
         return self.network(x)
 
 # ==========================================
-# 6. УТИЛИТЫ ДЛЯ РЕДКОСТИ
+# 6. УТИЛИТЫ ДЛЯ РЕДКОСТИ И УРОВНЕЙ (TIER BRACKETS)
 # ==========================================
-def get_expected_rarity(level: int) -> int:
-    if level <= 4: return 2
-    elif level <= 10: return 3
-    elif level <= 16: return 4
-    else: return 5
-
-def get_rarity_val(rarity_str: str, expected_rarity: int = 3) -> int:
+def get_rarity_val(rarity_str: str, party_level: int = 1) -> int:
     r = str(rarity_str).lower()
-    if 'varies' in r: return expected_rarity
-    found = []
-    if 'artifact' in r: found.append(6)
-    if 'legendary' in r: found.append(5)
-    if 'very rare' in r: found.append(4); r = r.replace('very rare', '')
-    if 'uncommon' in r: found.append(2); r = r.replace('uncommon', '')
-    if re.search(r'\brare\b', r): found.append(3)
-    if re.search(r'\bcommon\b', r): found.append(1)
-    return min(found, key=lambda x: abs(x - expected_rarity)) if found else 1
+    if 'artifact' in r: return 6
+    if 'legendary' in r: return 5
+    if 'very rare' in r: return 4
+    if 'uncommon' in r: return 2
+    if re.search(r'\brare\b', r): return 3
+    if 'varies' in r:
+        if party_level >= 16: return 5
+        elif party_level >= 10: return 4
+        elif party_level >= 4: return 3
+        else: return 2
+    return 1
+
+def get_tier_brackets(rarity_val: int) -> tuple[int, int]:
+    """Возвращает (min_level, max_level) актуальности предмета на основе твоего маппинга."""
+    mapping = {
+        1: (1, 3),    # Common
+        2: (1, 3),    # Uncommon
+        3: (4, 9),    # Rare
+        4: (10, 15),  # Very Rare
+        5: (16, 20),  # Legendary
+        6: (17, 20)   # Artifact
+    }
+    return mapping.get(rarity_val, (1, 3))
+
+def calculate_level_delta(item_rarity_val: int, party_level: int) -> int:
+    """
+    > 0: Предмет опережает развитие группы (Слишком сильный).
+    < 0: Предмет отстал от группы (Слишком слабый/Мусорный).
+    == 0: Предмет находится в своем актуальном диапазоне уровней.
+    """
+    min_lvl, max_lvl = get_tier_brackets(item_rarity_val)
+    if party_level < min_lvl:
+        return min_lvl - party_level
+    elif party_level > max_lvl:
+        return max_lvl - party_level
+    else:
+        return 0

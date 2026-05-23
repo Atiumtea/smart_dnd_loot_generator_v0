@@ -22,7 +22,7 @@ from sentence_transformers import SentenceTransformer, util
 from models import (
     DnDItemRanker, CLASS_SYNERGY, get_type_ohe, PLANES, TERRAIN, ATMOSPHERE,
     ENEMY_FACTIONS, ENEMY_ACTIONS, build_party_semantics, CLASS_LORE,
-    get_expected_rarity, get_rarity_val
+    get_tier_brackets, get_rarity_val, calculate_level_delta
 )
 
 os.environ['TRANSFORMERS_VERBOSITY'] = 'error'
@@ -152,7 +152,6 @@ class SmartLootGenerator:
 
         features_list = []
         candidates = []
-        expected_rarity = get_expected_rarity(party_level)
 
         for i, (doc_id, item) in enumerate(unique_candidates.items()):
             l_score = loc_scores_raw[i].item()
@@ -161,7 +160,9 @@ class SmartLootGenerator:
             if max(l_score, p_score) < 0.10:
                 continue
 
-            delta = get_rarity_val(item['rarity'], expected_rarity) - expected_rarity
+            rarity_val = get_rarity_val(item['rarity'], party_level)
+            delta = calculate_level_delta(rarity_val, party_level)
+
             is_duplicate = 1.0 if str(item['name']).lower() in [inv.lower() for inv in party_inventory] else 0.0
 
             item_type_str = str(item.get('type', 'wondrous item')).lower()

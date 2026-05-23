@@ -18,7 +18,7 @@ load_dotenv()
 
 from models import (
     ITEM_TYPES, CLASS_SYNERGY, get_type_ohe, CLASS_LORE, PLANES, TERRAIN, ATMOSPHERE,
-    ENEMY_FACTIONS, ENEMY_ACTIONS, build_party_semantics, get_expected_rarity, get_rarity_val
+    ENEMY_FACTIONS, ENEMY_ACTIONS, build_party_semantics, get_tier_brackets, get_rarity_val, calculate_level_delta
 )
 
 os.environ['TRANSFORMERS_VERBOSITY'] = 'error'
@@ -81,7 +81,7 @@ def ask_llm_auditor(scen, item, l_s_10, p_s_10, delta, max_retries=5):
             delta_text = "ЧУТЬ СИЛЬНЕЕ (Слегка крутовато для рядового события, но допустимо)"
         else:
             delta_text = "СИЛЬНЕЕ НОРМЫ (Слишком ценная награда для пустякового события! Снижай оценку)"
-    else: # delta < 0 (обычно -1 или -2, так как -3 отсекается в Gatekeeper)
+    else:
         if scen['imp'] >= 0.70:
             delta_text = f"СЛАБЕЕ (На {abs(delta)} тира ниже нормы. Разочаровывающий мусор для эпичного события! Снижай оценку)"
         else:
@@ -186,10 +186,13 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
 
         l_s = round(l_scores[idx].item(), 4)
         p_s = round(p_scores[idx].item(), 4)
-        exp_r = get_expected_rarity(scen['level'])
 
         rarity_str = str(item.get('rarity', 'common')).lower()
-        delta = get_rarity_val(rarity_str, exp_r) - exp_r
+        rarity_val = get_rarity_val(rarity_str, scen['level'])
+        item_expected_level = get_min_level_for_rarity(rarity_val)
+
+        # ДЕЛЬТА ТЕПЕРЬ В УРОВНЯХ: На сколько уровней предмет обгоняет (+) или отстает (-) от партии
+        delta = item_expected_level - scen['level']
 
         is_dup = 1.0 if random.random() < 0.05 else 0.0
         i_type = str(item.get('type', 'wondrous item')).lower()
@@ -209,14 +212,11 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
         reason_parts = []
         is_consumable = any(c in i_type for c in ['potion', 'scroll'])
 
-        # 1. Вычисляем "чистый потенциал" предмета (от 0.0 до 1.0)
         norm_l = min(1.0, max(0.0, l_s / 0.45))
         norm_p = min(1.0, max(0.0, p_s / 0.45))
         base_quality = (norm_l + norm_p) / 2.0
 
-        # 2. Мягкие мультипликаторы вместо констант: позволяет MLP учить градиенты и связи всех фичей
         if 'artifact' in rarity_str and scen['imp'] < 0.85:
-            # Чем меньше важность, тем сильнее режем потенциал
             mult = max(0.1, scen['imp'] / 0.85)
             penalty_multiplier *= mult
             reason_parts.append(f"[PYTHON] Артефакт (Важность {scen['imp']:.2f})")
@@ -226,17 +226,27 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
             penalty_multiplier *= mult
             reason_parts.append(f"[PYTHON] Легендарка (Важность {scen['imp']:.2f})")
 
-        if delta >= 2:
-            # Ступенчатый, но мягкий спуск: дельта 2 режет скор пополам, дельта 3 - на треть и т.д.
-            penalty_multiplier *= (1.0 / delta)
-            reason_parts.append(f"[PYTHON] Дельта +{delta}")
+        # --- ИСПРАВЛЕННАЯ ЛОГИКА ДЕЛЬТЫ (МЯГКАЯ И ЗАВИСИМАЯ ОТ ВАЖНОСТИ) ---
+        if delta > 0:
+            # Плавный штраф за опережение в уровне.
+            # delta**1.5 дает прогрессию (дельта 1 = 1, дельта 2 = 2.8, дельта 5 = 11.1)
+            # (1.1 - imp)**2 сильно ослабляет штраф при высокой важности (imp -> 1.0)
+            severity = (delta ** 1.5) * ((1.1 - scen['imp']) ** 2)
+            multiplier = 1.0 / (1.0 + severity * 2.0)
+            penalty_multiplier *= multiplier
+            reason_parts.append(f"[PYTHON] Рано на {delta} ур.")
 
-        elif delta <= -3:
-            penalty_multiplier *= (1.0 / abs(delta - 1))
-            reason_parts.append(f"[PYTHON] Дельта {delta}")
+        elif delta < 0:
+            # Плавный штраф за мусорный лут для высокоуровневых партий
+            # Чем выше важность боя, тем обиднее получать слабый лут
+            abs_d = abs(delta)
+            severity = (abs_d / 5.0) * (0.5 + scen['imp'])
+            multiplier = 1.0 / (1.0 + severity)
+            penalty_multiplier *= multiplier
+            reason_parts.append(f"[PYTHON] Поздно на {abs_d} ур.")
 
         if syn == 0.0:
-            penalty_multiplier *= 0.35  # Оставляем 35% от качества при отсутствии синергии
+            penalty_multiplier *= 0.35
             reason_parts.append("[PYTHON] Нет синергии")
 
         if is_dup == 1.0 and not is_consumable:
