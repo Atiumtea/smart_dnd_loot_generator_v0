@@ -71,7 +71,6 @@ def ask_llm_auditor(scen, item, l_s_10, p_s_10, delta, max_retries=5):
     """
 
     # === ДИНАМИЧЕСКИЙ КОНТЕКСТ БАЛАНСА И ВАЖНОСТИ ===
-    # Здесь мы переносим сложную нелинейную логику из generator_data.py в понятный для ИИ текст
     if delta == 0:
         delta_text = "НОРМА (Идеальный баланс для их уровня)"
     elif delta == 1:
