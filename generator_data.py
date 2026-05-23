@@ -13,22 +13,15 @@ def calculate_target_y(location_score, party_score, story_importance, level_rari
                        item_type_str):
     norm_loc = smooth_normalize(location_score)
     norm_party = smooth_normalize(party_score)
-
-    # 1.
     if norm_loc < 0.15:
-        semantic_base = min(norm_loc, norm_party)  # Берем худшее
+        semantic_base = min(norm_loc, norm_party)
     else:
         semantic_base = max(norm_loc, norm_party) * 0.7 + min(norm_loc, norm_party) * 0.3
-
     y = semantic_base * (0.4 + 0.6 * story_importance)
-
-    # 2. Синергия
     if synergy_flag == 0:
         y *= 0.15
     else:
         y *= 1.1
-
-    # 3. Нелинейная Редкость (Delta)
     if level_rarity_delta > 0:
         if level_rarity_delta == 1:
             y *= 1.0 - (0.5 * (1.0 - story_importance))
@@ -36,13 +29,9 @@ def calculate_target_y(location_score, party_score, story_importance, level_rari
             y *= 0.15 + (0.1 * story_importance)
         else:
             y *= 0.01
-
     elif level_rarity_delta < 0:
         base_penalty = abs(level_rarity_delta) * 0.25 * story_importance
-        # Если delta -3 или -4 на боссе, penalty будет > 0.75
         y *= max(0.05, 1.0 - base_penalty)
-
-    # 4. Умные Дубликаты (Расходники прощаются)
     if is_duplicate == 1.0:
         consumables = ['potion', 'scroll']
         if any(c in item_type_str.lower() for c in consumables):
