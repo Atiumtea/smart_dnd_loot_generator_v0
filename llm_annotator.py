@@ -70,14 +70,24 @@ def ask_llm_auditor(scen, item, l_s_10, p_s_10, delta, max_retries=5):
     Промпт сфокусирован исключительно на оценке лора и ролевой уместности.
     """
 
+    # === ДИНАМИЧЕСКИЙ КОНТЕКСТ БАЛАНСА И ВАЖНОСТИ ===
+    # Здесь мы переносим сложную нелинейную логику из generator_data.py в понятный для ИИ текст
     if delta == 0:
-        delta_text = "НОРМА (Идеально для их уровня)"
+        delta_text = "НОРМА (Идеальный баланс для их уровня)"
     elif delta == 1:
-        delta_text = "ЧУТЬ СИЛЬНЕЕ (Отличная редкая награда)"
-    else:
-        delta_text = f"СЛАБЕЕ (На {abs(delta)} тира ниже нормы)"
+        if scen['imp'] >= 0.70:
+            delta_text = "ЧУТЬ СИЛЬНЕЕ (Отличная и заслуженная награда за важный бой)"
+        elif scen['imp'] >= 0.50:
+            delta_text = "ЧУТЬ СИЛЬНЕЕ (Слегка крутовато для рядового события, но допустимо)"
+        else:
+            delta_text = "СИЛЬНЕЕ НОРМЫ (Слишком ценная награда для пустякового события! Снижай оценку)"
+    else: # delta < 0 (обычно -1 или -2, так как -3 отсекается в Gatekeeper)
+        if scen['imp'] >= 0.70:
+            delta_text = f"СЛАБЕЕ (На {abs(delta)} тира ниже нормы. Разочаровывающий мусор для эпичного события! Снижай оценку)"
+        else:
+            delta_text = f"СЛАБЕЕ (На {abs(delta)} тира ниже нормы. Игрокам будет скучновато)"
 
-    system_prompt = """Ты — опытный Dungeon Master. Твоя задача — оценить качество лута (Score от 0.150 до 1.000).
+    system_prompt = """Ты — опытный Dungeon Master. Твоя задача — оценить качество лута (Score от 0.150 до 0.990).
 ВНИМАНИЕ: Предмет УЖЕ прошел все системные проверки на баланс и правила. Он полностью легален для выдачи.
 Твоя задача — оценить только его СЮЖЕТНУЮ УМЕСТНОСТЬ и РОЛЕВУЮ ПОЛЕЗНОСТЬ.
 
@@ -85,11 +95,11 @@ def ask_llm_auditor(scen, item, l_s_10, p_s_10, delta, max_retries=5):
 Программа предоставляет тебе баллы "Совпадения" от 1.0 до 10.0. Опирайся на них при оценке.
 
 КРИТЕРИИ ОЦЕНКИ:
-- Идеальный лут (0.800 - 1.000): Совпадение с Локацией И Партией высокое (от 7.0 до 10.0). Предмет идеально ложится в историю.
-- Хороший лут (0.500 - 0.799): Одно из совпадений среднее (4.0 - 6.9). Предмет полезен, но лор не идеален, или наоборот.
-- Средний/Слабый лут (0.150 - 0.499): Совпадения низкие (ниже 4.0) ИЛИ предмет заметно "СЛАБЕЕ" нормы по уровню (игрокам он будет скучен).
+- Идеальный лут (0.800 - 0.990): Совпадение с Локацией И Партией высокое (от 7.0 до 10.0). Баланс идеален или заслужен.
+- Хороший лут (0.500 - 0.799): Одно из совпадений среднее (4.0 - 6.9). Предмет полезен.
+- Средний/Слабый лут (0.150 - 0.499): Совпадения низкие (ниже 4.0) ИЛИ Баланс содержит прямое указание "Снижай оценку".
 
-ОТВЕТ СТРОГО В JSON: {"reasoning": "Кратко объясни почему", "score": 0.000}"""
+ОТВЕТ СТРОГО В JSON (где score это число строго от 0.150 до 0.990): {"reasoning": "...", "score": 0.300}"""
 
     user_prompt = f"""ДАННЫЕ:
 - Предмет: {item['name']} (Тип: {item['type']}, Редкость: {item['rarity']})
@@ -199,32 +209,54 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
         reason = ""
         is_consumable = any(c in i_type for c in ['potion', 'scroll'])
 
-        if 'artifact' in rarity_str and scen['imp'] < 0.90:
-            is_hard_penalty, hard_score, reason = True, random.uniform(0.010,
-                                                                       0.050), "[PYTHON] Артефакт не подходит по Важности."
-        elif 'legendary' in rarity_str and scen['imp'] < 0.80:
-            is_hard_penalty, hard_score, reason = True, random.uniform(0.020,
-                                                                       0.060), "[PYTHON] Легендарка не подходит по Важности."
+        # 1. Вычисляем "чистое качество" предмета (от 0.0 до 1.0)
+        # 0.45 берем как эталонный максимум для косинусного сходства
+        norm_l = min(1.0, max(0.0, l_s / 0.45))
+        norm_p = min(1.0, max(0.0, p_s / 0.45))
+        base_quality = (norm_l + norm_p) / 2.0
+
+        # 2. Штрафуем градиентом: чем лучше предмет, тем ближе он к "потолку" штрафа
+        if 'artifact' in rarity_str and scen['imp'] < 0.85:
+            is_hard_penalty = True
+            hard_score = 0.010 + (0.040 * base_quality)  # Диапазон: от 0.010 до 0.050
+            reason = "[PYTHON] Артефакт не подходит по Важности."
+
+        elif 'legendary' in rarity_str and scen['imp'] < 0.75:
+            is_hard_penalty = True
+            hard_score = 0.020 + (0.040 * base_quality)  # Диапазон: от 0.020 до 0.060
+            reason = "[PYTHON] Легендарка не подходит по Важности."
+
         elif delta >= 2:
-            is_hard_penalty, hard_score, reason = True, random.uniform(0.050,
-                                                                       0.150), f"[PYTHON] Слом баланса (Дельта {delta})."
+            is_hard_penalty = True
+            hard_score = 0.050 + (0.080 * base_quality)
+            reason = f"[PYTHON] Слом баланса (Дельта {delta})."
+
         elif delta <= -3:
-            is_hard_penalty, hard_score, reason = True, random.uniform(0.050,
-                                                                       0.120), f"[PYTHON] Слишком слабо для группы (Дельта {delta})."
+            is_hard_penalty = True
+            hard_score = 0.050 + (0.150 * base_quality)
+            reason = f"[PYTHON] Слишком слабо для группы (Дельта {delta})."
+
         elif syn == 0.0:
-            is_hard_penalty, hard_score, reason = True, random.uniform(0.050,
-                                                                       0.150), "[PYTHON] Нет синергии с классами."
+            is_hard_penalty = True
+            hard_score = 0.050 + (0.100 * base_quality)  # Диапазон: от 0.050 до 0.150
+            reason = "[PYTHON] Нет синергии с классами."
+
         elif is_dup == 1.0 and not is_consumable:
-            is_hard_penalty, hard_score, reason = True, random.uniform(0.050, 0.120), "[PYTHON] Бесполезный дубликат."
+            is_hard_penalty = True
+            hard_score = 0.050 + (0.070 * base_quality)  # Диапазон: от 0.050 до 0.120
+            reason = "[PYTHON] Бесполезный дубликат."
+
+        # 3. Добавляем микро-шум ТОЛЬКО для дисперсии (чтобы не было жестких линий на графике)
+        if is_hard_penalty:
+            hard_score += random.gauss(0, 0.005)
+            hard_score = max(0.001, min(1.0, hard_score))
 
         # ==========================================
         # МАРШРУТИЗАЦИЯ (ROUTING)
         # ==========================================
         if is_hard_penalty:
-            # LLM не вызывается! Экономим ресурсы.
             target_y = round(hard_score, 4)
         else:
-            # Вызываем LLM только для хороших предметов
             l_s_10 = normalize_for_llm(l_s)
             p_s_10 = normalize_for_llm(p_s)
 
@@ -234,6 +266,8 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
                 progress.console.print(f"[red]⚠️ Пропуск: {llm_reason}[/red]")
                 time.sleep(3)
                 continue
+
+            score = max(0.150, score)
 
             noise = random.gauss(0, 0.015)
             target_y = max(0.001, min(1.0, round(score + noise, 4)))

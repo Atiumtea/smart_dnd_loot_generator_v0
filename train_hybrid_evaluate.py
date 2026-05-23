@@ -113,7 +113,7 @@ def train_and_evaluate(use_synthetic):
     # 🌟 АДАПТАЦИЯ 2: Умное переключение Сэмплера
     if use_synthetic and len(np.unique(is_man_train)) > 1:
         print("⚖️ Гибридный режим: включаю WeightedRandomSampler для балансировки...")
-        sample_weights = np.where(is_man_train == 1, 50.0, 1.0)
+        sample_weights = np.where(is_man_train == 1, 10.0, 1.0)
         sampler = WeightedRandomSampler(
             weights=sample_weights,
             num_samples=len(sample_weights),
