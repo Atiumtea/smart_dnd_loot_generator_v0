@@ -202,60 +202,60 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
                 break
 
         # ==========================================
-        # АРХИТЕКТУРНЫЙ ПРОРЫВ: PYTHON GATEKEEPER
+        # НЕПРЕРЫВНЫЙ PYTHON GATEKEEPER
         # ==========================================
         is_hard_penalty = False
-        hard_score = 0.0
-        reason = ""
+        penalty_multiplier = 1.0
+        reason_parts = []
         is_consumable = any(c in i_type for c in ['potion', 'scroll'])
 
-        # 1. Вычисляем "чистое качество" предмета (от 0.0 до 1.0)
-        # 0.45 берем как эталонный максимум для косинусного сходства
+        # 1. Вычисляем "чистый потенциал" предмета (от 0.0 до 1.0)
         norm_l = min(1.0, max(0.0, l_s / 0.45))
         norm_p = min(1.0, max(0.0, p_s / 0.45))
         base_quality = (norm_l + norm_p) / 2.0
 
-        # 2. Штрафуем градиентом: чем лучше предмет, тем ближе он к "потолку" штрафа
+        # 2. Мягкие мультипликаторы вместо констант: позволяет MLP учить градиенты и связи всех фичей
         if 'artifact' in rarity_str and scen['imp'] < 0.85:
-            is_hard_penalty = True
-            hard_score = 0.010 + (0.040 * base_quality)  # Диапазон: от 0.010 до 0.050
-            reason = "[PYTHON] Артефакт не подходит по Важности."
+            # Чем меньше важность, тем сильнее режем потенциал
+            mult = max(0.1, scen['imp'] / 0.85)
+            penalty_multiplier *= mult
+            reason_parts.append(f"[PYTHON] Артефакт (Важность {scen['imp']:.2f})")
 
         elif 'legendary' in rarity_str and scen['imp'] < 0.75:
-            is_hard_penalty = True
-            hard_score = 0.020 + (0.040 * base_quality)  # Диапазон: от 0.020 до 0.060
-            reason = "[PYTHON] Легендарка не подходит по Важности."
+            mult = max(0.15, scen['imp'] / 0.75)
+            penalty_multiplier *= mult
+            reason_parts.append(f"[PYTHON] Легендарка (Важность {scen['imp']:.2f})")
 
-        elif delta >= 2:
-            is_hard_penalty = True
-            hard_score = 0.050 + (0.080 * base_quality)
-            reason = f"[PYTHON] Слом баланса (Дельта {delta})."
+        if delta >= 2:
+            # Ступенчатый, но мягкий спуск: дельта 2 режет скор пополам, дельта 3 - на треть и т.д.
+            penalty_multiplier *= (1.0 / delta)
+            reason_parts.append(f"[PYTHON] Дельта +{delta}")
 
         elif delta <= -3:
-            is_hard_penalty = True
-            hard_score = 0.050 + (0.150 * base_quality)
-            reason = f"[PYTHON] Слишком слабо для группы (Дельта {delta})."
+            penalty_multiplier *= (1.0 / abs(delta - 1))
+            reason_parts.append(f"[PYTHON] Дельта {delta}")
 
-        elif syn == 0.0:
-            is_hard_penalty = True
-            hard_score = 0.050 + (0.100 * base_quality)  # Диапазон: от 0.050 до 0.150
-            reason = "[PYTHON] Нет синергии с классами."
+        if syn == 0.0:
+            penalty_multiplier *= 0.35  # Оставляем 35% от качества при отсутствии синергии
+            reason_parts.append("[PYTHON] Нет синергии")
 
-        elif is_dup == 1.0 and not is_consumable:
-            is_hard_penalty = True
-            hard_score = 0.050 + (0.070 * base_quality)  # Диапазон: от 0.050 до 0.120
-            reason = "[PYTHON] Бесполезный дубликат."
+        if is_dup == 1.0 and not is_consumable:
+            penalty_multiplier *= 0.20  # Оставляем 20% от качества для бесполезного дубликата
+            reason_parts.append("[PYTHON] Дубликат")
 
-        # 3. Добавляем микро-шум ТОЛЬКО для дисперсии (чтобы не было жестких линий на графике)
-        if is_hard_penalty:
-            hard_score += random.gauss(0, 0.005)
-            hard_score = max(0.001, min(1.0, hard_score))
+        # 3. Маршрутизация: экономим API, если штрафов накопилось достаточно много
+        is_hard_penalty = (penalty_multiplier < 0.50)
 
         # ==========================================
         # МАРШРУТИЗАЦИЯ (ROUTING)
         # ==========================================
         if is_hard_penalty:
-            target_y = round(hard_score, 4)
+            # ИТОГ: Теперь целевой Y не константа! Он зависит от ВСЕХ входных параметров,
+            # и нейросети придется выучить сложную нелинейную формулу.
+            hard_score = base_quality * penalty_multiplier
+            hard_score += random.gauss(0, 0.005)  # Микро-шум для дисперсии
+            target_y = round(max(0.001, min(0.999, hard_score)), 4)
+            reason = " + ".join(reason_parts)
         else:
             l_s_10 = normalize_for_llm(l_s)
             p_s_10 = normalize_for_llm(p_s)
@@ -272,9 +272,8 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
             noise = random.gauss(0, 0.015)
             target_y = max(0.001, min(1.0, round(score + noise, 4)))
             reason = f"[AI] {llm_reason}"
-            time.sleep(1.5)  # Пауза только если дергали API
+            time.sleep(1.5)
 
-        # Сохранение в базу
         row_dict = {
             'item_name': item['name'], 'location_text': scen['loc'], 'party_text': scen['party'],
             'loc_score': l_s, 'party_score': p_s, 'story_importance': scen['imp'],
