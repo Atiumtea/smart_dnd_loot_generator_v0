@@ -55,6 +55,8 @@ def roll_final_loot(valid_items, party_level):
         ))
         return
 
+    # ВЗВЕШЕННЫЙ БРОСОК
+    pool_size = len(valid_items)
     weights = [item['final_score'] for item in valid_items]
     chosen_item = random.choices(valid_items, weights=weights, k=1)[0]
     drop_chance = (chosen_item['final_score'] / sum(weights)) * 100
@@ -69,9 +71,10 @@ def roll_final_loot(valid_items, party_level):
     desc = str(chosen_item.get('description', '')).strip()
 
     content = (
+        f"[bold dim]Размер пула кандидатов:[/bold dim] {pool_size} шт.\n"
         f"[bold cyan]Редкость:[/bold cyan] {chosen_item['rarity'].title()}\n"
         f"[bold cyan]Тип:[/bold cyan] {chosen_item['type'].title()}\n"
-        f"[bold cyan]Шанс выпадения:[/bold cyan] {drop_chance:.1f}%\n"
+        f"[bold cyan]Шанс выпадения:[/bold cyan] {drop_chance:.1f}% [dim](при ML Score: {chosen_item['final_score']:.4f})[/dim]\n"
         f"[bold cyan]Комментарий ИИ:[/bold cyan] [italic green]{reason}[/italic green]\n"
         f"{'-' * 40}\n"
         f"[bold white]Описание:[/bold white]\n{desc}"
@@ -99,10 +102,10 @@ class SmartLootGenerator:
                 exit()
 
             try:
-                with open('scaler_hybrid.pkl', 'rb') as f:
-                    self.current_scaler = pickle.load(f)
+                with open('preprocessor_hybrid.pkl', 'rb') as f:
+                    self.preprocessor = pickle.load(f)
             except FileNotFoundError:
-                console.print("[bold red]⚠️ Ошибка: Файл 'scaler_hybrid.pkl' не найден![/bold red]")
+                console.print("[bold red]⚠️ Ошибка: Файл 'preprocessor_hybrid.pkl' не найден. Запустите train_hybrid_evaluate.py![/bold red]")
                 exit()
 
             self.model = DnDItemRanker(input_size=15)
@@ -175,7 +178,11 @@ class SmartLootGenerator:
                         synergy_flag = 1.0
                         break
 
-            feature_vector = [l_score, p_score, story_importance, delta, is_duplicate, synergy_flag] + type_ohe_list
+            # СТРОГИЙ ПОРЯДОК: [Непрерывные] + [Бинарные] + [OHE Типы]
+            continuous_features = [l_score, p_score, story_importance, delta]
+            binary_features = [is_duplicate, synergy_flag]
+            feature_vector = continuous_features + binary_features + type_ohe_list
+
             features_list.append(feature_vector)
 
             item.update({
@@ -187,10 +194,12 @@ class SmartLootGenerator:
         if not candidates:
             return []
 
-        X_raw = np.array(features_list)
-        X_scaled = self.current_scaler.transform(X_raw)
+        # 1. Трансформация правильным препроцессором
+        X_raw = np.array(features_list, dtype=np.float32)
+        X_scaled = self.preprocessor.transform(X_raw)
         X_tensor = torch.tensor(X_scaled, dtype=torch.float32)
 
+        # 2. Инференс
         with torch.no_grad():
             predictions = self.model(X_tensor).numpy().flatten()
 
@@ -198,6 +207,14 @@ class SmartLootGenerator:
             item['final_score'] = float(predictions[i])
 
         candidates.sort(key=lambda x: x['final_score'], reverse=True)
+
+        # 3. Динамический Базовый Скор
+        base_score_threshold = 0.40
+        valid_candidates = [c for c in candidates if c['final_score'] >= base_score_threshold]
+
+        if not valid_candidates:
+            base_score_threshold = 0.20
+            valid_candidates = [c for c in candidates if c['final_score'] >= base_score_threshold]
 
         console.print()
         table = Table(title="[dim]🛠️ DEBUG: ТОП-3 ПРЕДМЕТА ГЛАЗАМИ ИИ[/dim]", box=box.SIMPLE)
@@ -208,20 +225,12 @@ class SmartLootGenerator:
 
         for i in range(min(3, len(candidates))):
             c = candidates[i]
-            status = "[bold green]✅ ПРОШЕЛ[/bold green]" if c[
-                                                                'final_score'] >= 0.30 else "[bold red]❌ ОТКЛОНЕН[/bold red]"
+            status = "[bold green]✅ В ПУЛЕ[/bold green]" if c['final_score'] >= base_score_threshold else "[bold red]❌ ОТКЛОНЕН[/bold red]"
             score_str = f"{c['final_score']:.3f} ([dim]{c['loc_score']:.2f} | {c['party_score']:.2f} | {c['delta']}[/dim])"
             table.add_row(c['name'], c['rarity'].title(), score_str, status)
 
         console.print(table)
 
-        valid_candidates = []
-        for item in candidates:
-            if item['final_score'] >= 0.30:
-                item['final_score'] = item['final_score'] ** 3
-                valid_candidates.append(item)
-
-        valid_candidates.sort(key=lambda x: x['final_score'], reverse=True)
         return valid_candidates
 
 
@@ -254,9 +263,11 @@ if __name__ == "__main__":
             continue
 
         terrain_str = f"{random.choice(TERRAIN)}, {random.choice(PLANES)}" if random.random() < 0.2 else random.choice(TERRAIN)
-        loc = f"{terrain_str}, {random.choice(ATMOSPHERE)}, {random.choice(ENEMY_FACTIONS)}, {random.choice(ENEMY_ACTIONS)}"
+        dyn_loc = f"{terrain_str}, {random.choice(ATMOSPHERE)}, {random.choice(ENEMY_FACTIONS)}, {random.choice(ENEMY_ACTIONS)}"
         console.print(f"[bold yellow]🗺️  ЛОКАЦИЯ[/bold yellow] [dim](Например: {dyn_loc}):[/dim]")
         loc_input = console.input("   [bold]>[/bold] ")
+        if not loc_input.strip():
+            loc_input = dyn_loc
 
         party_members = []
         base_classes_list = list(CLASS_LORE.keys())
@@ -269,6 +280,8 @@ if __name__ == "__main__":
 
         console.print(f"[bold yellow]🛡️  СОСТАВ ПАРТИИ[/bold yellow] [dim](Например: {dyn_party}):[/dim]")
         party_input = console.input("   [bold]>[/bold] ")
+        if not party_input.strip():
+            party_input = dyn_party
 
         with console.status("[bold purple]🧠 ИИ анализирует двойной контекст...[/bold purple]", spinner="bouncingBar"):
             pool = generator.generate_loot(
