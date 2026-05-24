@@ -289,20 +289,19 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
 
             reason = "[PYTHON] " + " + ".join(reason_parts) if reason_parts else "[PYTHON] Unknown penalty"
         else:
-            l_s_10 = normalize_for_llm(l_s)
-            p_s_10 = normalize_for_llm(p_s)
-
-            score, llm_reason = ask_llm_auditor(scen, item, l_s_10, p_s_10, delta)
+            score, llm_reason = ask_llm_auditor(scen, item, delta)
 
             if score is None:
                 progress.console.print(f"[red]⚠️ Пропуск: {llm_reason}[/red]")
                 time.sleep(3)
                 continue
 
-            score = max(0.150, score)
+            weighted_raw = (l_s * 0.55) + (p_s * 0.45)
+
+            raw_target = (score * 0.75) + (weighted_raw * 0.25)
 
             noise = random.gauss(0, 0.015)
-            target_y = max(0.001, min(1.0, round(score + noise, 4)))
+            target_y = round(max(0.150, min(0.999, raw_target + noise)), 4)
             reason = f"[AI] {llm_reason}"
             time.sleep(1.5)
 
