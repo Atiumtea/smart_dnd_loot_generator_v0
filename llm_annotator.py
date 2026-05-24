@@ -241,15 +241,15 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
 
         if 'artifact' in rarity_str and scen['imp'] < 0.85:
             penalty_multiplier *= 0.10
-            reason_parts.append(f"[PYTHON] Артефакт в рядовом бою (Imp {scen['imp']:.2f})")
+            reason_parts.append(f"Артефакт в рядовом бою (Imp {scen['imp']:.2f})")
 
-        elif 'legendary' in rarity_str and scen['imp'] < 0.75:
+        elif 'legendary' in rarity_str and scen['imp'] < 0.70:
             penalty_multiplier *= 0.20
-            reason_parts.append(f"[PYTHON] Легендарка в рядовом бою (Imp {scen['imp']:.2f})")
+            reason_parts.append(f"Легендарка в рядовом бою (Imp {scen['imp']:.2f})")
 
         elif 'very rare' in rarity_str and scen['imp'] < 0.50:
-            penalty_multiplier *= 0.40  # Умеренный штраф для "очень редких"
-            reason_parts.append(f"[PYTHON] Очень редкий лут не к месту (Imp {scen['imp']:.2f})")
+            penalty_multiplier *= 0.40
+            reason_parts.append(f"Очень редкий лут не к месту (Imp {scen['imp']:.2f})")
 
         if delta > 0:
             severity_base = (delta / 2.0) ** 2.5
@@ -257,7 +257,7 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
             severity = severity_base * importance_forgiveness
             multiplier = 1.0 / (1.0 + severity)
             penalty_multiplier *= multiplier
-            reason_parts.append(f"[PYTHON] Рано на {delta} ур.")
+            reason_parts.append(f"Рано на {delta} ур.")
 
         elif delta < 0:
             abs_d = abs(delta)
@@ -267,15 +267,15 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
 
             multiplier = 1.0 / (1.0 + severity)
             penalty_multiplier *= multiplier
-            reason_parts.append(f"[PYTHON] Поздно на {abs_d} ур.")
+            reason_parts.append(f"Поздно на {abs_d} ур.")
 
         if syn == 0.0:
             penalty_multiplier *= 0.35
-            reason_parts.append("[PYTHON] Нет синергии")
+            reason_parts.append("Нет синергии")
 
         if is_dup == 1.0 and not is_consumable:
             penalty_multiplier *= 0.20
-            reason_parts.append("[PYTHON] Дубликат")
+            reason_parts.append("Дубликат")
 
         is_hard_penalty = (penalty_multiplier < 0.50)
 
@@ -286,7 +286,8 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
             hard_score = base_quality * penalty_multiplier
             hard_score += random.gauss(0, 0.005)
             target_y = round(max(0.001, min(0.999, hard_score)), 4)
-            reason = " + ".join(reason_parts)
+
+            reason = "[PYTHON] " + " + ".join(reason_parts) if reason_parts else "[PYTHON] Unknown penalty"
         else:
             l_s_10 = normalize_for_llm(l_s)
             p_s_10 = normalize_for_llm(p_s)
