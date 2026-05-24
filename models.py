@@ -274,4 +274,4 @@ def calculate_level_delta(item_rarity_val: int, party_level: int) -> int:
     elif party_level > max_lvl:
         delta = max_lvl - party_level
 
-    return max(-6, min(6, delta))
+    return delta

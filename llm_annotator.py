@@ -37,7 +37,6 @@ if not API_KEY:
 client = Groq(api_key=API_KEY, timeout=30.0)
 MODEL_NAME = "llama-3.1-8b-instant"
 
-
 def generate_dynamic_scenario():
     terrain_str = f"{random.choice(TERRAIN)}, {random.choice(PLANES)}" if random.random() < 0.2 else random.choice(
         TERRAIN)
@@ -63,21 +62,13 @@ def normalize_for_llm(ml_score, max_expected=0.45):
     normalized = (ml_score / max_expected) * 10.0
     return min(10.0, max(0.1, round(normalized, 1)))
 
-
-def ask_llm_auditor(scen, item, l_s_10, p_s_10, delta, max_retries=5):
-    """
-    Вызывается ТОЛЬКО если предмет прошел хард-фильтры Python.
-    Промпт сфокусирован исключительно на оценке лора и ролевой уместности.
-    """
-
+def ask_llm_auditor(scen, item, delta, max_retries=5):
     if delta == 0:
         delta_text = "NORMAL (Ideal balance for their level)"
     elif delta > 0:
         if delta <= 4:
             if scen['imp'] >= 0.70:
                 delta_text = f"SLIGHTLY STRONGER ({delta} levels higher. Well-deserved reward for a major battle)"
-            elif scen['imp'] >= 0.50:
-                delta_text = f"SLIGHTLY STRONGER ({delta} levels higher. Acceptable for this event)"
             else:
                 delta_text = f"STRONGER THAN NORMAL ({delta} levels higher. Too valuable for a minor event! STRICTLY REDUCE SCORE)"
         else:
@@ -115,8 +106,6 @@ OUTPUT STRICTLY IN JSON FORMAT:
 - Location: {scen['loc']}
 - Party Composition (Level {scen['level']}): {scen['party']}
 - Item Balance: {delta_text}
-- Location Match: {l_s_10:.1f} / 10.0
-- Party Match: {p_s_10:.1f} / 10.0
 
 Perform the analysis and output JSON."""
 
@@ -140,13 +129,11 @@ Perform the analysis and output JSON."""
                 result = json.loads(match.group(0)) if match else {"score": 0.3}
 
             score = float(result.get("score", 0.3))
-
             llm_reason = (
                 f"Loc: {result.get('loc_analysis', '')} | "
                 f"Party: {result.get('party_analysis', '')} | "
                 f"Bal: {result.get('balance_check', 'No data')}"
             )
-
             return score, llm_reason
 
         except Exception as e:
@@ -158,7 +145,7 @@ Perform the analysis and output JSON."""
             else:
                 return None, f"Ошибка API: {str(e)}"
 
-    return None, "Превышен лимит таймаутов API (Groq перегружен)."
+    return None, "Превышен лимит таймаутов API."
 
 
 # --- ЗАГРУЗКА ---
@@ -227,16 +214,20 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
         # ==========================================
         penalty_multiplier = 1.0
         reason_parts = []
+        force_python = False  # НОВЫЙ ФЛАГ: Принудительный отсев без LLM
         is_consumable = any(c in i_type for c in ['potion', 'scroll', 'arrow', 'bolt', 'dart'])
 
         norm_l = min(1.0, max(0.0, l_s / 0.45))
         norm_p = min(1.0, max(0.0, p_s / 0.45))
         base_quality = (norm_l + norm_p) / 2.0
 
+        # 1. ФУНДАМЕНТАЛЬНЫЙ ФИЛЬТР РЕЛЕВАНТНОСТИ
         if base_quality < 0.15:
-            penalty_multiplier *= 0.68
+            penalty_multiplier *= 0.20
             reason_parts.append(f"Очень низкая релевантность (L+P: {base_quality:.2f})")
+            force_python = True  # ЖЕСТКИЙ БЛОК: Не тратим токены на мусор
 
+        # 2. СЮЖЕТНЫЕ ОГРАНИЧЕНИЯ
         if 'artifact' in rarity_str and scen['imp'] < 0.85:
             penalty_multiplier *= 0.33
             reason_parts.append(f"Артефакт в рядовом бою (Imp {scen['imp']:.2f})")
@@ -249,6 +240,7 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
             penalty_multiplier *= 0.56
             reason_parts.append(f"Очень редкий лут не к месту (Imp {scen['imp']:.2f})")
 
+        # 3. БАЛАНС УРОВНЕЙ
         if delta > 0:
             severity_base = (delta / 2.0) ** 2.5
             importance_forgiveness = max(0.1, 1.1 - scen['imp'])
@@ -256,17 +248,20 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
             multiplier = 1.0 / (1.0 + severity)
             penalty_multiplier *= multiplier
             reason_parts.append(f"Рано на {delta} ур.")
+            if delta > 3:
+                force_python = True
 
         elif delta < 0:
             abs_d = abs(delta)
             normalized_abs_d = abs_d / 5.0
-
             severity = (normalized_abs_d ** 2.5) * (0.2 + scen['imp'] ** 2)
-
             multiplier = 1.0 / (1.0 + severity)
             penalty_multiplier *= multiplier
             reason_parts.append(f"Поздно на {abs_d} ур.")
+            if abs_d > 4:
+                force_python = True
 
+        # 4. СИНЕРГИЯ И ДУБЛИКАТЫ
         if syn == 0.0:
             penalty_multiplier *= 0.35
             reason_parts.append("Нет синергии")
@@ -275,16 +270,16 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
             penalty_multiplier *= 0.20
             reason_parts.append("Дубликат")
 
-        is_hard_penalty = (penalty_multiplier < 0.50)
-
         # ==========================================
         # МАРШРУТИЗАЦИЯ (ROUTING)
         # ==========================================
+        is_hard_penalty = force_python or (penalty_multiplier < 0.50)
+
         if is_hard_penalty:
             hard_score = base_quality * penalty_multiplier
             hard_score += random.gauss(0, 0.005)
+            # Возвращаем 0.001. Если мусор — пусть тонет.
             target_y = round(max(0.001, min(0.999, hard_score)), 4)
-
             reason = "[PYTHON] " + " + ".join(reason_parts) if reason_parts else "[PYTHON] Unknown penalty"
         else:
             score, llm_reason = ask_llm_auditor(scen, item, delta)
@@ -295,10 +290,11 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
                 continue
 
             weighted_raw = (l_s * 0.55) + (p_s * 0.45)
-
             raw_target = (score * 0.75) + (weighted_raw * 0.25)
-
             noise = random.gauss(0, 0.015)
+
+            # А вот для ИИ-оценок оставляем мягкий пол 0.150,
+            # так как если предмет дошел до ИИ, он уже имеет базовую ценность
             target_y = round(max(0.150, min(0.999, raw_target + noise)), 4)
             reason = f"[AI] {llm_reason}"
             time.sleep(1.5)
