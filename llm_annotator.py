@@ -29,10 +29,31 @@ warnings.filterwarnings("ignore")
 
 console = Console()
 
-API_KEY = os.environ.get("GROQ_API_KEY")
+# --- ВЫБОР API КЛЮЧА ---
+console.print()
+console.print("[bold yellow]Доступные ключи API:[/bold yellow]")
+console.print("1: GROQ_API_KEY_1")
+console.print("2: GROQ_API_KEY_2")
+console.print("3: GROQ_API_KEY_3")
+console.print()
+
+console.print("[bold green]Выберите ключ (введите 1, 2 или 3):[/bold green]", end=" ")
+key_choice = console.input("").strip()
+
+if key_choice not in ['1', '2', '3']:
+    console.print("[bold red]Неверный ввод. По умолчанию выбран GROQ_API_KEY_1.[/bold red]")
+    key_choice = '1'
+
+env_key_name = f"GROQ_API_KEY_{key_choice}"
+API_KEY = os.environ.get(env_key_name)
+
 if not API_KEY:
-    console.print("[bold red]ОШИБКА: Не найден ключ GROQ_API_KEY в файле .env![/bold red]")
+    console.print(f"[bold red]ОШИБКА: Не найден ключ {env_key_name} в файле .env![/bold red]")
     exit()
+
+console.print()
+console.print(f"[bold green]✅ Подключен ключ: {env_key_name}[/bold green]")
+console.print()
 
 client = Groq(api_key=API_KEY, timeout=30.0)
 MODEL_NAME = "llama-3.1-8b-instant"
@@ -169,8 +190,16 @@ if not os.path.exists(GOLD_FILE):
 else:
     total_annotated = len(pd.read_csv(GOLD_FILE, sep=';'))
 
-console.print(f"\n[bold cyan]🚀 ГИБРИДНАЯ РАЗМЕТКА ЗАПУЩЕНА (В базе: {total_annotated})[/bold cyan]")
-target_samples = int(console.input("Сколько примеров сгенерировать? (Например, 5000): "))
+console.print()
+console.print(f"[bold cyan]🚀 ГИБРИДНАЯ РАЗМЕТКА ЗАПУЩЕНА (В базе: {total_annotated})[/bold cyan]")
+
+while True:
+    try:
+        user_input = console.input("[bold yellow]Сколько примеров сгенерировать? (Например, 5000): [/bold yellow]")
+        target_samples = int(user_input)
+        break
+    except ValueError:
+        console.print("[bold red]Пожалуйста, введите корректное число.[/bold red]")
 
 success_count = 0
 with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as progress:
@@ -214,7 +243,7 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
         # ==========================================
         penalty_multiplier = 1.0
         reason_parts = []
-        force_python = False  # НОВЫЙ ФЛАГ: Принудительный отсев без LLM
+        force_python = False
         is_consumable = any(c in i_type for c in ['potion', 'scroll', 'arrow', 'bolt', 'dart'])
 
         eff_l = max(0.0, l_s - 0.12) / (0.45 - 0.12)
@@ -282,7 +311,6 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
         if is_hard_penalty:
             hard_score = base_quality * penalty_multiplier
             hard_score += random.gauss(0, 0.005)
-            # Возвращаем 0.001. Если мусор — пусть тонет.
             target_y = round(max(0.001, min(0.999, hard_score)), 4)
             reason = "[PYTHON] " + " + ".join(reason_parts) if reason_parts else "[PYTHON] Unknown penalty"
         else:
@@ -297,8 +325,6 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
             raw_target = (score * 0.75) + (weighted_raw * 0.25)
             noise = random.gauss(0, 0.015)
 
-            # А вот для ИИ-оценок оставляем мягкий пол 0.150,
-            # так как если предмет дошел до ИИ, он уже имеет базовую ценность
             target_y = round(max(0.150, min(0.999, raw_target + noise)), 4)
             reason = f"[AI] {llm_reason}"
             time.sleep(1.5)
