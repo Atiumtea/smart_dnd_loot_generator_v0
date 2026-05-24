@@ -33,6 +33,7 @@ warnings.filterwarnings("ignore")
 
 console = Console()
 
+
 def roll_final_loot(valid_items, party_level):
     console.print("\n[bold cyan]🎲 Бросаем виртуальные кубики...[/bold cyan]")
 
@@ -64,14 +65,18 @@ def roll_final_loot(valid_items, party_level):
     loc_s = chosen_item.get('loc_score', 0)
     party_s = chosen_item.get('party_score', 0)
 
-    if party_s > loc_s + 0.1: reason = "Этот предмет идеально подходит способностям вашей группы."
-    elif loc_s > party_s + 0.1: reason = "Этот трофей выглядит очень уместно в данной локации."
-    else: reason = "Сбалансированная находка, которая вписывается в окружение и полезна героям."
+    if party_s > loc_s + 0.1:
+        reason = "Этот предмет идеально подходит способностям вашей группы."
+    elif loc_s > party_s + 0.1:
+        reason = "Этот трофей выглядит очень уместно в данной локации."
+    else:
+        reason = "Сбалансированная находка, которая вписывается в окружение и полезна героям."
 
     desc = str(chosen_item.get('description', '')).strip()
 
     content = (
         f"[bold dim]Размер пула кандидатов:[/bold dim] {pool_size} шт.\n"
+        f"[bold cyan]Источник:[/bold cyan] [italic]{chosen_item.get('source', 'Unknown')}[/italic]\n"
         f"[bold cyan]Редкость:[/bold cyan] {chosen_item['rarity'].title()}\n"
         f"[bold cyan]Тип:[/bold cyan] {chosen_item['type'].title()}\n"
         f"[bold cyan]Шанс выпадения:[/bold cyan] {drop_chance:.1f}% [dim](при ML Score: {chosen_item['final_score']:.4f})[/dim]\n"
@@ -90,22 +95,32 @@ def roll_final_loot(valid_items, party_level):
 
 class SmartLootGenerator:
     def __init__(self):
-        with console.status("[bold green]Загрузка компонентов ИИ...[/bold green]", spinner="dots"):
+        with console.status("[bold green]Загрузка компонентов ИИ и векторной БД...[/bold green]", spinner="dots"):
             self.encoder = SentenceTransformer('all-MiniLM-L6-v2')
             self.db_client = chromadb.PersistentClient(path="./dnd_vector_db")
 
             try:
                 self.collection = self.db_client.get_collection(name="magic_items")
+
+                all_data = self.collection.get(include=['metadatas'])
+                sources = set()
+                for meta in all_data['metadatas']:
+                    if meta and 'source' in meta:
+                        sources.add(meta['source'])
+                self.available_sources = sorted(list(sources))
+                self.active_sources = self.available_sources.copy()
+
             except chromadb.errors.InvalidCollectionException:
                 console.print(
-                    "[bold red]⚠️ Ошибка: Коллекция 'magic_items' не найдена в векторной базе.[/bold red]")
+                    "[bold red]⚠️ Ошибка: Коллекция 'magic_items' не найдена. Сначала запусти data_pipeline.py![/bold red]")
                 exit()
 
             try:
                 with open('preprocessor_hybrid.pkl', 'rb') as f:
                     self.preprocessor = pickle.load(f)
             except FileNotFoundError:
-                console.print("[bold red]⚠️ Ошибка: Файл 'preprocessor_hybrid.pkl' не найден.[/bold red]")
+                console.print(
+                    "[bold red]⚠️ Ошибка: Файл 'preprocessor_hybrid.pkl' не найден. Запустите train_hybrid_evaluate.py![/bold red]")
                 exit()
 
             self.model = DnDItemRanker(input_size=15)
@@ -121,30 +136,86 @@ class SmartLootGenerator:
             console.print(f"[bold red]\n⚠️ Ошибка: Файл {path} не найден![/bold red]")
             exit()
 
+    def configure_sources(self):
+        console.print("\n[bold yellow]📚 НАСТРОЙКА ИСТОЧНИКОВ ЛУТА[/bold yellow]")
+
+        table = Table(box=box.MINIMAL_DOUBLE_HEAD)
+        table.add_column("ID", justify="right", style="cyan")
+        table.add_column("Название книги / Источника", style="white")
+
+        for i, src in enumerate(self.available_sources, 1):
+            table.add_row(str(i), src)
+
+        console.print(table)
+
+        console.print(
+            "[dim]Введите номера источников через запятую, которые хотите ОСТАВИТЬ (например: 1, 3, 5).[/dim]")
+        console.print("[dim]Или введите [bold]all[/bold], чтобы использовать все доступные книги.[/dim]")
+
+        while True:
+            choice = console.input("[bold]Ваш выбор (по умолчанию 'all'): [/bold]").strip().lower()
+            if not choice or choice == 'all':
+                self.active_sources = self.available_sources.copy()
+                console.print(f"[green]✅ Все источники ({len(self.active_sources)} шт.) включены.[/green]\n")
+                break
+
+            try:
+                selected_indices = [int(x.strip()) - 1 for x in choice.split(',')]
+                valid_sources = []
+                for idx in selected_indices:
+                    if 0 <= idx < len(self.available_sources):
+                        valid_sources.append(self.available_sources[idx])
+
+                if valid_sources:
+                    self.active_sources = valid_sources
+                    console.print(f"[green]✅ Выбрано источников: {len(self.active_sources)}.[/green]\n")
+                    break
+                else:
+                    console.print("[red]❌ Некорректный ввод. Укажите существующие номера.[/red]")
+            except ValueError:
+                console.print("[red]❌ Некорректный формат. Используйте числа через запятую.[/red]")
+
     def generate_loot(self, location_text, party_text, party_level, story_importance, party_inventory=[]):
+        if not self.active_sources:
+            return []
+
         semantic_party, found_base_classes = build_party_semantics(party_text)
 
         with torch.no_grad():
             loc_emb = self.encoder.encode(location_text)
             party_emb = self.encoder.encode(semantic_party)
 
+        where_clause = None
+        if len(self.active_sources) < len(self.available_sources):
+            if len(self.active_sources) == 1:
+                where_clause = {"source": self.active_sources[0]}
+            else:
+                where_clause = {"source": {"$in": self.active_sources}}
+
         results = self.collection.query(
             query_embeddings=[loc_emb.tolist(), party_emb.tolist()],
             n_results=400,
+            where=where_clause,
             include=['metadatas', 'documents', 'embeddings']
         )
 
         unique_candidates = {}
         for q_idx in range(2):
+            if not results['ids'][q_idx]:
+                continue
             for i, doc_id in enumerate(results['ids'][q_idx]):
                 if doc_id not in unique_candidates:
                     unique_candidates[doc_id] = {
                         'name': results['metadatas'][q_idx][i]['name'],
                         'type': results['metadatas'][q_idx][i]['type'],
                         'rarity': results['metadatas'][q_idx][i]['rarity'],
+                        'source': results['metadatas'][q_idx][i].get('source', 'Unknown'),
                         'description': results['documents'][q_idx][i],
                         'embedding': results['embeddings'][q_idx][i]
                     }
+
+        if not unique_candidates:
+            return []
 
         candidates_embs = torch.tensor([c['embedding'] for c in unique_candidates.values()], dtype=torch.float32)
         loc_emb_tensor = torch.tensor(loc_emb, dtype=torch.float32)
@@ -178,7 +249,6 @@ class SmartLootGenerator:
                         synergy_flag = 1.0
                         break
 
-            # СТРОГИЙ ПОРЯДОК: [Непрерывные] + [Бинарные] + [OHE Типы]
             continuous_features = [l_score, p_score, story_importance, delta]
             binary_features = [is_duplicate, synergy_flag]
             feature_vector = continuous_features + binary_features + type_ohe_list
@@ -194,12 +264,10 @@ class SmartLootGenerator:
         if not candidates:
             return []
 
-        # 1. Трансформация правильным препроцессором
         X_raw = np.array(features_list, dtype=np.float32)
         X_scaled = self.preprocessor.transform(X_raw)
         X_tensor = torch.tensor(X_scaled, dtype=torch.float32)
 
-        # 2. Инференс
         with torch.no_grad():
             predictions = self.model(X_tensor).numpy().flatten()
 
@@ -208,7 +276,6 @@ class SmartLootGenerator:
 
         candidates.sort(key=lambda x: x['final_score'], reverse=True)
 
-        # 3. Динамический Базовый Скор
         base_score_threshold = 0.40
         valid_candidates = [c for c in candidates if c['final_score'] >= base_score_threshold]
 
@@ -220,6 +287,7 @@ class SmartLootGenerator:
         table = Table(title="[dim]🛠️ DEBUG: ТОП-3 ПРЕДМЕТА ГЛАЗАМИ ИИ[/dim]", box=box.SIMPLE)
         table.add_column("Название", style="cyan")
         table.add_column("Редкость", style="magenta")
+        table.add_column("Источник", style="yellow")
         table.add_column("Скор (L | P | D)", justify="right", style="white")
         table.add_column("Статус", justify="center")
 
@@ -227,7 +295,9 @@ class SmartLootGenerator:
             c = candidates[i]
             status = "[bold green]✅ В ПУЛЕ[/bold green]" if c['final_score'] >= base_score_threshold else "[bold red]❌ ОТКЛОНЕН[/bold red]"
             score_str = f"{c['final_score']:.3f} ([dim]{c['loc_score']:.2f} | {c['party_score']:.2f} | {c['delta']}[/dim])"
-            table.add_row(c['name'], c['rarity'].title(), score_str, status)
+
+            source_short = c['source'][:15] + "..." if len(c['source']) > 15 else c['source']
+            table.add_row(c['name'], c['rarity'].title(), source_short, score_str, status)
 
         console.print(table)
 
@@ -240,6 +310,8 @@ if __name__ == "__main__":
     console.print()
 
     generator = SmartLootGenerator()
+
+    generator.configure_sources()
 
     while True:
         console.print(Rule(style="dim"))
@@ -262,7 +334,8 @@ if __name__ == "__main__":
             console.print("[bold red]⚠️ Ошибка: Вводите только числа![/bold red]")
             continue
 
-        terrain_str = f"{random.choice(TERRAIN)}, {random.choice(PLANES)}" if random.random() < 0.2 else random.choice(TERRAIN)
+        terrain_str = f"{random.choice(TERRAIN)}, {random.choice(PLANES)}" if random.random() < 0.2 else random.choice(
+            TERRAIN)
         dyn_loc = f"{terrain_str}, {random.choice(ATMOSPHERE)}, {random.choice(ENEMY_FACTIONS)}, {random.choice(ENEMY_ACTIONS)}"
         console.print(f"[bold yellow]🗺️  ЛОКАЦИЯ[/bold yellow] [dim](Например: {dyn_loc}):[/dim]")
         loc_input = console.input("   [bold]>[/bold] ")
