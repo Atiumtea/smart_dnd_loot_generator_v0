@@ -98,14 +98,14 @@ class SmartLootGenerator:
                 self.collection = self.db_client.get_collection(name="magic_items")
             except chromadb.errors.InvalidCollectionException:
                 console.print(
-                    "[bold red]⚠️ Ошибка: Коллекция 'magic_items' не найдена в векторной базе. Сначала запусти vectorizer.py![/bold red]")
+                    "[bold red]⚠️ Ошибка: Коллекция 'magic_items' не найдена в векторной базе.[/bold red]")
                 exit()
 
             try:
                 with open('preprocessor_hybrid.pkl', 'rb') as f:
                     self.preprocessor = pickle.load(f)
             except FileNotFoundError:
-                console.print("[bold red]⚠️ Ошибка: Файл 'preprocessor_hybrid.pkl' не найден. Запустите train_hybrid_evaluate.py![/bold red]")
+                console.print("[bold red]⚠️ Ошибка: Файл 'preprocessor_hybrid.pkl' не найден.[/bold red]")
                 exit()
 
             self.model = DnDItemRanker(input_size=15)

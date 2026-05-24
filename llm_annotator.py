@@ -35,12 +35,16 @@ console.print("[bold yellow]Доступные ключи API:[/bold yellow]")
 console.print("1: GROQ_API_KEY_1")
 console.print("2: GROQ_API_KEY_2")
 console.print("3: GROQ_API_KEY_3")
+console.print("4: GROQ_API_KEY_4")
+console.print("5: GROQ_API_KEY_5")
+console.print("6: GROQ_API_KEY_6")
+console.print("7: GROQ_API_KEY_7")
 console.print()
 
-console.print("[bold green]Выберите ключ (введите 1, 2 или 3):[/bold green]", end=" ")
+console.print("[bold green]Выберите ключ (введите число от 1 до 7):[/bold green]", end=" ")
 key_choice = console.input("").strip()
 
-if key_choice not in ['1', '2', '3']:
+if key_choice not in ['1', '2', '3', '4', '5', '6', '7']:
     console.print("[bold red]Неверный ввод. По умолчанию выбран GROQ_API_KEY_1.[/bold red]")
     key_choice = '1'
 
