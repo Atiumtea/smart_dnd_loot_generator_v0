@@ -222,10 +222,10 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
         base_quality = (norm_l + norm_p) / 2.0
 
         # 1. ФУНДАМЕНТАЛЬНЫЙ ФИЛЬТР РЕЛЕВАНТНОСТИ
-        if base_quality < 0.15:
+        if base_quality < 0.22:
             penalty_multiplier *= 0.20
             reason_parts.append(f"Очень низкая релевантность (L+P: {base_quality:.2f})")
-            force_python = True  # ЖЕСТКИЙ БЛОК: Не тратим токены на мусор
+            force_python = True
 
         # 2. СЮЖЕТНЫЕ ОГРАНИЧЕНИЯ
         if 'artifact' in rarity_str and scen['imp'] < 0.85:
@@ -253,8 +253,8 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
 
         elif delta < 0:
             abs_d = abs(delta)
-            normalized_abs_d = abs_d / 5.0
-            severity = (normalized_abs_d ** 2.5) * (0.2 + scen['imp'] ** 2)
+            normalized_abs_d = abs_d / 4.0
+            severity = (normalized_abs_d ** 2.5) * (0.75 + scen['imp'])
             multiplier = 1.0 / (1.0 + severity)
             penalty_multiplier *= multiplier
             reason_parts.append(f"Поздно на {abs_d} ур.")
