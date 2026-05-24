@@ -70,7 +70,6 @@ def ask_llm_auditor(scen, item, l_s_10, p_s_10, delta, max_retries=5):
     Промпт сфокусирован исключительно на оценке лора и ролевой уместности.
     """
 
-    # === ДИНАМИЧЕСКИЙ КОНТЕКСТ (Переведен на Английский для LLM) ===
     if delta == 0:
         delta_text = "NORMAL (Ideal balance for their level)"
     elif delta > 0:
@@ -90,7 +89,6 @@ def ask_llm_auditor(scen, item, l_s_10, p_s_10, delta, max_retries=5):
         else:
             delta_text = f"WEAKER ({abs_d} levels lower. Players might find it boring)"
 
-    # === ИДЕАЛЬНЫЙ СТРУКТУРИРОВАННЫЙ ПРОМПТ (Чистый Английский) ===
     system_prompt = """You are a Data Auditor and an experienced Dungeon Master for D&D 5e.
 ATTENTION: The item has ALREADY passed strict systemic checks for game-breaking issues. It is legal to drop.
 Your task is to provide a final evaluation (Score from 0.150 to 0.990) based ONLY on NARRATIVE APPROPRIATENESS, ROLEPLAY UTILITY, and BALANCE.
@@ -149,7 +147,6 @@ Perform the analysis and output JSON."""
                 f"Bal: {result.get('balance_check', 'No data')}"
             )
 
-            # Если всё прошло успешно, возвращаем ДВА значения
             return score, llm_reason
 
         except Exception as e:
@@ -159,11 +156,8 @@ Perform the analysis and output JSON."""
                 console.print(f"[yellow]⏳ Задержка API. Ждем {wait_time} сек... (Попытка {attempt + 1})[/yellow]")
                 time.sleep(wait_time)
             else:
-                # В случае фатальной ошибки API, возвращаем ДВА значения (None и текст ошибки)
                 return None, f"Ошибка API: {str(e)}"
 
-    # === ИМЕННО ЭТА СТРОКА БЫЛА ПОТЕРЯНА РАНЕЕ ===
-    # Если цикл исчерпал все 5 попыток из-за лимитов, он должен вернуть кортеж!
     return None, "Превышен лимит таймаутов API (Groq перегружен)."
 
 
@@ -239,16 +233,20 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
         norm_p = min(1.0, max(0.0, p_s / 0.45))
         base_quality = (norm_l + norm_p) / 2.0
 
+        if base_quality < 0.15:
+            penalty_multiplier *= 0.68
+            reason_parts.append(f"Очень низкая релевантность (L+P: {base_quality:.2f})")
+
         if 'artifact' in rarity_str and scen['imp'] < 0.85:
-            penalty_multiplier *= 0.10
+            penalty_multiplier *= 0.33
             reason_parts.append(f"Артефакт в рядовом бою (Imp {scen['imp']:.2f})")
 
         elif 'legendary' in rarity_str and scen['imp'] < 0.70:
-            penalty_multiplier *= 0.20
+            penalty_multiplier *= 0.44
             reason_parts.append(f"Легендарка в рядовом бою (Imp {scen['imp']:.2f})")
 
         elif 'very rare' in rarity_str and scen['imp'] < 0.50:
-            penalty_multiplier *= 0.40
+            penalty_multiplier *= 0.56
             reason_parts.append(f"Очень редкий лут не к месту (Imp {scen['imp']:.2f})")
 
         if delta > 0:

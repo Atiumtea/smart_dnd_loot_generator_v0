@@ -265,11 +265,13 @@ def get_tier_brackets(rarity_val: int) -> tuple[int, int]:
     }
     return mapping.get(rarity_val, (1, 3))
 
+
 def calculate_level_delta(item_rarity_val: int, party_level: int) -> int:
     min_lvl, max_lvl = get_tier_brackets(item_rarity_val)
+    delta = 0
     if party_level < min_lvl:
-        return min_lvl - party_level
+        delta = min_lvl - party_level
     elif party_level > max_lvl:
-        return max_lvl - party_level
-    else:
-        return 0
+        delta = max_lvl - party_level
+
+    return max(-6, min(6, delta))
