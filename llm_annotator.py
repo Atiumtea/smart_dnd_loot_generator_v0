@@ -70,121 +70,101 @@ def ask_llm_auditor(scen, item, l_s_10, p_s_10, delta, max_retries=5):
     Промпт сфокусирован исключительно на оценке лора и ролевой уместности.
     """
 
-    # === ДИНАМИЧЕСКИЙ КОНТЕКСТ БАЛАНСА И ВАЖНОСТИ ===
+    # === ДИНАМИЧЕСКИЙ КОНТЕКСТ (Переведен на Английский для LLM) ===
     if delta == 0:
-        delta_text = "НОРМА (Идеальный баланс для их уровня)"
+        delta_text = "NORMAL (Ideal balance for their level)"
     elif delta > 0:
-        if delta <= 4:  # Аналог старого "На 1 тир выше"
+        if delta <= 4:
             if scen['imp'] >= 0.70:
-                delta_text = f"ЧУТЬ СИЛЬНЕЕ (На {delta} ур. выше. Отличная и заслуженная награда за важный бой)"
+                delta_text = f"SLIGHTLY STRONGER ({delta} levels higher. Well-deserved reward for a major battle)"
             elif scen['imp'] >= 0.50:
-                delta_text = f"ЧУТЬ СИЛЬНЕЕ (На {delta} ур. выше. Слегка крутовато для рядового события, но допустимо)"
+                delta_text = f"SLIGHTLY STRONGER ({delta} levels higher. Acceptable for this event)"
             else:
-                delta_text = f"СИЛЬНЕЕ НОРМЫ (На {delta} ур. выше. Слишком ценная награда для пустякового события! Снижай оценку)"
-        else:  # delta >= 5 (Аналог старого "На 2+ тира выше")
-            delta_text = f"СЛИШКОМ СИЛЬНОЕ (На {delta} ур. выше. Серьезно ломает баланс. Строго снижай оценку)"
-    else:  # delta < 0
+                delta_text = f"STRONGER THAN NORMAL ({delta} levels higher. Too valuable for a minor event! STRICTLY REDUCE SCORE)"
+        else:
+            delta_text = f"TOO STRONG ({delta} levels higher. STRICTLY REDUCE SCORE)"
+    else:
         abs_d = abs(delta)
         if scen['imp'] >= 0.70:
-            delta_text = f"СЛАБЕЕ (На {abs_d} ур. ниже нормы. Разочаровывающий мусор для эпичного события! Снижай оценку)"
+            delta_text = f"WEAKER ({abs_d} levels lower. Disappointing loot for a major event! STRICTLY REDUCE SCORE)"
         else:
-            delta_text = f"СЛАБЕЕ (На {abs_d} ур. ниже нормы. Игрокам будет скучновато)"
+            delta_text = f"WEAKER ({abs_d} levels lower. Players might find it boring)"
 
-    def ask_llm_auditor(scen, item, l_s_10, p_s_10, delta, max_retries=5):
-        """
-        Вызывается ТОЛЬКО если предмет прошел хард-фильтры Python.
-        Промпт сфокусирован исключительно на оценке лора и ролевой уместности.
-        """
+    # === ИДЕАЛЬНЫЙ СТРУКТУРИРОВАННЫЙ ПРОМПТ (Чистый Английский) ===
+    system_prompt = """You are a Data Auditor and an experienced Dungeon Master for D&D 5e.
+ATTENTION: The item has ALREADY passed strict systemic checks for game-breaking issues. It is legal to drop.
+Your task is to provide a final evaluation (Score from 0.150 to 0.990) based ONLY on NARRATIVE APPROPRIATENESS, ROLEPLAY UTILITY, and BALANCE.
 
-        # === ДИНАМИЧЕСКИЙ КОНТЕКСТ (Переведен на Английский для LLM) ===
-        if delta == 0:
-            delta_text = "NORMAL (Ideal balance for their level)"
-        elif delta > 0:
-            if delta <= 4:
-                if scen['imp'] >= 0.70:
-                    delta_text = f"SLIGHTLY STRONGER ({delta} levels higher. Well-deserved reward for a major battle)"
-                elif scen['imp'] >= 0.50:
-                    delta_text = f"SLIGHTLY STRONGER ({delta} levels higher. Acceptable for this event)"
-                else:
-                    delta_text = f"STRONGER THAN NORMAL ({delta} levels higher. Too valuable for a minor event! STRICTLY REDUCE SCORE)"
-            else:
-                delta_text = f"TOO STRONG ({delta} levels higher. STRICTLY REDUCE SCORE)"
-        else:
-            abs_d = abs(delta)
-            if scen['imp'] >= 0.70:
-                delta_text = f"WEAKER ({abs_d} levels lower. Disappointing loot for a major event! STRICTLY REDUCE SCORE)"
-            else:
-                delta_text = f"WEAKER ({abs_d} levels lower. Players might find it boring)"
+METRICS:
+The program provides you with "Match" scores from 1.0 to 10.0. Rely on them.
 
-        system_prompt = """You are a Data Auditor and an experienced Dungeon Master for D&D 5e.
-    ATTENTION: The item has ALREADY passed strict systemic checks for game-breaking issues. It is legal to drop.
-    Your task is to provide a final evaluation (Score from 0.150 to 0.990) based ONLY on NARRATIVE APPROPRIATENESS, ROLEPLAY UTILITY, and BALANCE.
+EVALUATION RULES (STRICT):
+1. Read the "Item Balance" field carefully. If it says "STRICTLY REDUCE SCORE" in all caps, you MUST penalize the item and output a Score between 0.150 and 0.450, even if Location and Party matches are 10.0!
+2. Ideal loot (0.800 - 0.990): Location AND Party matches >= 7.0. Balance is NORMAL or "Well-deserved reward".
+3. Good loot (0.500 - 0.799): One of the matches is >= 5.0. Balance is acceptable.
+4. Average/Weak loot (0.150 - 0.499): Matches are < 5.0 OR Balance requires a score reduction.
 
-    METRICS:
-    The program provides you with "Match" scores from 1.0 to 10.0. Rely on them.
+OUTPUT STRICTLY IN JSON FORMAT:
+{
+  "loc_analysis": "Brief analysis of how the item fits the location",
+  "party_analysis": "Brief analysis of how the item fits the party classes",
+  "balance_check": "Analyze the Balance field (if it says reduce score, confirm the penalty here)",
+  "score": <float_number_from_0.150_to_0.990>
+}"""
 
-    EVALUATION RULES (STRICT):
-    1. Read the "Item Balance" field carefully. If it says "STRICTLY REDUCE SCORE" in all caps, you MUST penalize the item and output a Score between 0.150 and 0.450, even if Location and Party matches are 10.0!
-    2. Ideal loot (0.800 - 0.990): Location AND Party matches >= 7.0. Balance is NORMAL or "Well-deserved reward".
-    3. Good loot (0.500 - 0.799): One of the matches is >= 5.0. Balance is acceptable.
-    4. Average/Weak loot (0.150 - 0.499): Matches are < 5.0 OR Balance requires a score reduction.
+    user_prompt = f"""DATA:
+- Item: {item['name']} (Type: {item['type']}, Rarity: {item['rarity']})
+- Location: {scen['loc']}
+- Party Composition (Level {scen['level']}): {scen['party']}
+- Item Balance: {delta_text}
+- Location Match: {l_s_10:.1f} / 10.0
+- Party Match: {p_s_10:.1f} / 10.0
 
-    OUTPUT STRICTLY IN JSON FORMAT:
-    {
-      "loc_analysis": "Brief analysis of how the item fits the location",
-      "party_analysis": "Brief analysis of how the item fits the party classes",
-      "balance_check": "Analyze the Balance field (if it says reduce score, confirm the penalty here)",
-      "score": <float_number_from_0.150_to_0.990>
-    }"""
+Perform the analysis and output JSON."""
 
-        user_prompt = f"""DATA:
-    - Item: {item['name']} (Type: {item['type']}, Rarity: {item['rarity']})
-    - Location: {scen['loc']}
-    - Party Composition (Level {scen['level']}): {scen['party']}
-    - Item Balance: {delta_text}
-    - Location Match: {l_s_10:.1f} / 10.0
-    - Party Match: {p_s_10:.1f} / 10.0
+    for attempt in range(max_retries):
+        try:
+            chat_completion = client.chat.completions.create(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                model=MODEL_NAME,
+                temperature=0.0,
+                response_format={"type": "json_object"}
+            )
+            content = chat_completion.choices[0].message.content
 
-    Perform the analysis and output JSON."""
-
-        for attempt in range(max_retries):
             try:
-                chat_completion = client.chat.completions.create(
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt}
-                    ],
-                    model=MODEL_NAME,
-                    temperature=0.0,
-                    response_format={"type": "json_object"}
-                )
-                content = chat_completion.choices[0].message.content
-                try:
-                    result = json.loads(content)
-                except json.JSONDecodeError:
-                    match = re.search(r'\{.*\}', content, re.DOTALL)
-                    result = json.loads(match.group(0)) if match else {"score": 0.3}
+                result = json.loads(content)
+            except json.JSONDecodeError:
+                match = re.search(r'\{.*\}', content, re.DOTALL)
+                result = json.loads(match.group(0)) if match else {"score": 0.3}
 
-                score = float(result.get("score", 0.3))
+            score = float(result.get("score", 0.3))
 
-                llm_reason = (
-                    f"Loc: {result.get('loc_analysis', '')} | "
-                    f"Party: {result.get('party_analysis', '')} | "
-                    f"Bal: {result.get('balance_check', 'No data')}"
-                )
+            llm_reason = (
+                f"Loc: {result.get('loc_analysis', '')} | "
+                f"Party: {result.get('party_analysis', '')} | "
+                f"Bal: {result.get('balance_check', 'No data')}"
+            )
 
-                return score, llm_reason
+            # Если всё прошло успешно, возвращаем ДВА значения
+            return score, llm_reason
 
-            except Exception as e:
-                error_msg = str(e).lower()
-                if any(code in error_msg for code in
-                       ["429", "rate_limit", "timeout", "503", "502", "failed_generation"]):
-                    wait_time = 15.0 * (attempt + 1)
-                    console.print(f"[yellow]⏳ Задержка API. Ждем {wait_time} сек... (Попытка {attempt + 1})[/yellow]")
-                    time.sleep(wait_time)
-                else:
-                    return None, f"Ошибка API: {str(e)}"
-        return None, "Timeout."
+        except Exception as e:
+            error_msg = str(e).lower()
+            if any(code in error_msg for code in ["429", "rate_limit", "timeout", "503", "502", "failed_generation"]):
+                wait_time = 15.0 * (attempt + 1)
+                console.print(f"[yellow]⏳ Задержка API. Ждем {wait_time} сек... (Попытка {attempt + 1})[/yellow]")
+                time.sleep(wait_time)
+            else:
+                # В случае фатальной ошибки API, возвращаем ДВА значения (None и текст ошибки)
+                return None, f"Ошибка API: {str(e)}"
+
+    # === ИМЕННО ЭТА СТРОКА БЫЛА ПОТЕРЯНА РАНЕЕ ===
+    # Если цикл исчерпал все 5 попыток из-за лимитов, он должен вернуть кортеж!
+    return None, "Превышен лимит таймаутов API (Groq перегружен)."
 
 
 # --- ЗАГРУЗКА ---
@@ -253,7 +233,7 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
         # ==========================================
         penalty_multiplier = 1.0
         reason_parts = []
-        is_consumable = any(c in i_type for c in ['potion', 'scroll'])
+        is_consumable = any(c in i_type for c in ['potion', 'scroll', 'arrow', 'bolt', 'dart'])
 
         norm_l = min(1.0, max(0.0, l_s / 0.45))
         norm_p = min(1.0, max(0.0, p_s / 0.45))
