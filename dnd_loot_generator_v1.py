@@ -160,7 +160,7 @@ class SmartLootGenerator:
             l_score = loc_scores_raw[i].item()
             p_score = party_scores_raw[i].item()
 
-            if max(l_score, p_score) < 0.10:
+            if max(l_score, p_score) < 0.15:
                 continue
 
             rarity_val = get_rarity_val(item['rarity'], party_level)

@@ -217,8 +217,12 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
         force_python = False  # НОВЫЙ ФЛАГ: Принудительный отсев без LLM
         is_consumable = any(c in i_type for c in ['potion', 'scroll', 'arrow', 'bolt', 'dart'])
 
-        norm_l = min(1.0, max(0.0, l_s / 0.45))
-        norm_p = min(1.0, max(0.0, p_s / 0.45))
+        eff_l = max(0.0, l_s - 0.12) / (0.45 - 0.12)
+        eff_p = max(0.0, p_s - 0.12) / (0.45 - 0.12)
+
+        norm_l = min(1.0, max(0.0, eff_l))
+        norm_p = min(1.0, max(0.0, eff_p))
+
         base_quality = (norm_l + norm_p) / 2.0
 
         # 1. ФУНДАМЕНТАЛЬНЫЙ ФИЛЬТР РЕЛЕВАНТНОСТИ
