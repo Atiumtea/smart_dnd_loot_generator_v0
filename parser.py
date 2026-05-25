@@ -92,7 +92,7 @@ def build_knowledge_base():
     embeddings = model.encode(texts, batch_size=64, show_progress_bar=True, convert_to_tensor=False)
     df['embedding'] = list(embeddings)
 
-    print("\n[ЭТАП 4] Сохранение базы в .pkl (Легаси для скриптов обучения)...")
+    print("\n[ЭТАП 4] Сохранение базы в .pkl...")
     with open('dnd_knowledge_base.pkl', 'wb') as f:
         pickle.dump(df, f)
 

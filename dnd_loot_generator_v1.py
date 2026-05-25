@@ -14,6 +14,7 @@ import pandas as pd
 import numpy as np
 import pickle
 import random
+import json
 import re
 import chromadb
 import chromadb.errors
@@ -123,10 +124,24 @@ class SmartLootGenerator:
                     "[bold red]⚠️ Ошибка: Файл 'preprocessor_hybrid.pkl' не найден. Запустите train_hybrid_evaluate.py![/bold red]")
                 exit()
 
+            try:
+                with open('calibration_lut.json', 'r') as f:
+                    self.calibration_lut = json.load(f)
+            except FileNotFoundError:
+                console.print(
+                    "[bold yellow]⚠️ 'calibration_lut.json' не найден. Калибровка отключена. Запустите train_hybrid_evaluate.py для максимальной точности![/bold yellow]")
+                self.calibration_lut = [0.0] * 20
+
             self.model = DnDItemRanker(input_size=15)
             self.load_model('dnd_hybrid_weights.pth')
 
         console.print("[dim]✅ ИИ-модули и база данных загружены.[/dim]")
+
+    def calibrate_score(self, raw_score):
+        """Высокоточная LUT-калибровка за O(1) с шагом 0.05"""
+        idx = int(raw_score / 0.05)
+        idx = min(max(0, idx), len(self.calibration_lut) - 1)
+        return raw_score + self.calibration_lut[idx]
 
     def load_model(self, path):
         try:
@@ -272,7 +287,11 @@ class SmartLootGenerator:
             predictions = self.model(X_tensor).numpy().flatten()
 
         for i, item in enumerate(candidates):
-            item['final_score'] = float(predictions[i])
+            raw_score = float(predictions[i])
+            calibrated_score = self.calibrate_score(raw_score)
+
+            # Сохраняем итоговый скор в границах от 0 до 1
+            item['final_score'] = min(1.0, max(0.0, calibrated_score))
 
         candidates.sort(key=lambda x: x['final_score'], reverse=True)
 

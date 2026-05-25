@@ -1,21 +1,22 @@
 import pandas as pd
 import numpy as np
 import torch
+import json
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
+from torch.utils.data import Dataset, DataLoader
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score, ndcg_score
+from sklearn.metrics import mean_squared_error, mean_absolute_error, ndcg_score
 from sklearn.compose import ColumnTransformer
 import matplotlib.pyplot as plt
-from sklearn.compose import ColumnTransformer
 from scipy.stats import spearmanr
 import seaborn as sns
 import pickle
 import os
-from models import DnDItemRanker, ITEM_TYPES
 import random
+from models import DnDItemRanker, ITEM_TYPES
+
 
 def set_seed(seed=42):
     random.seed(seed)
@@ -44,48 +45,28 @@ class DnDDataset(Dataset):
 # ==========================================
 # 2. ПОДГОТОВКА ДАННЫХ
 # ==========================================
-def load_hybrid_data(use_synthetic):
-    if use_synthetic:
-        print("📦 Загрузка синтетической базы (ВКЛЮЧЕНА)...")
-        try:
-            synth_df = pd.read_csv('dnd_mlp_training_data.csv', sep=';')
-            synth_df['is_manual'] = 0
-        except FileNotFoundError:
-            print("⚠️ Синтетика не найдена! Учимся только на ручной разметке.")
-            synth_df = pd.DataFrame()
-    else:
-        print("🚫 Синтетическая база ОТКЛЮЧЕНА. Режим чистого ML.")
-        synth_df = pd.DataFrame()
-
+def load_training_data():
+    print("📦 Загрузка размеченного датасета (LLM + Эвристики)...")
     try:
-        print("🧑‍🏫 Поиск ручной разметки Мастера...")
-        gold_df = pd.read_csv('llm_gold_standard.csv', sep=';')
+        df = pd.read_csv('llm_gold_standard.csv', sep=';')
 
-        if len(gold_df) < 5 and not use_synthetic:
-            print("❌ Слишком мало ручных данных для отключения синтетики (Нужно хотя бы 50+). Аварийное завершение.")
-            exit()
+        if len(df) < 50:
+            print("⚠️ В датасете мало данных! Рекомендуется сгенерировать больше через llm_annotator.py")
 
-        print(f"✨ Найдено {len(gold_df)} эталонных оценок.")
-        gold_df['is_manual'] = 1
-
-        final_df = pd.concat([synth_df, gold_df], ignore_index=True)
-        final_df = final_df.fillna(0.0)
-
-        print(f"📊 Итоговый объем датасета: {len(final_df)} примеров.")
-        return final_df
+        df = df.fillna(0.0)
+        print(f"✨ Найдено {len(df)} эталонных оценок.")
+        return df
 
     except FileNotFoundError:
-        if not use_synthetic:
-            print("❌ Ручной датасет не найден, а синтетика отключена. Не на чем учиться!")
-            exit()
-        return synth_df
+        print("❌ Датасет 'llm_gold_standard.csv' не найден. Сначала запусти llm_annotator.py!")
+        exit()
 
 # ==========================================
 # 3. ОСНОВНОЙ СКРИПТ ОБУЧЕНИЯ
 # ==========================================
-def train_and_evaluate(use_synthetic):
+def train_and_evaluate():
     set_seed(42)
-    df = load_hybrid_data(use_synthetic)
+    df = load_training_data()
 
     type_features = [f'type_{t.replace(" ", "_")}' for t in ITEM_TYPES]
     continuous_features = ['loc_score', 'party_score', 'story_importance', 'level_rarity_delta']
@@ -97,17 +78,13 @@ def train_and_evaluate(use_synthetic):
 
     X = df[features].values.astype(np.float32)
     y = df['target_y'].values.astype(np.float32)
-    is_manual = df['is_manual'].values.astype(int)
 
-    stratify_array = is_manual if len(np.unique(is_manual)) > 1 else None
-
-    X_temp, X_test, y_temp, y_test, is_man_temp, _ = train_test_split(
-        X, y, is_manual, test_size=0.15, random_state=42, stratify=stratify_array
+    X_train_val, X_test, y_train_val, y_test = train_test_split(
+        X, y, test_size=0.15, random_state=42
     )
 
-    stratify_temp = is_man_temp if len(np.unique(is_man_temp)) > 1 else None
-    X_train, X_val, y_train, y_val, is_man_train, _ = train_test_split(
-        X_temp, y_temp, is_man_temp, test_size=0.176, random_state=42, stratify=stratify_temp
+    X_train, X_val, y_train, y_val = train_test_split(
+        X_train_val, y_train_val, test_size=0.176, random_state=42
     )
 
     cont_indices = list(range(len(continuous_features)))
@@ -130,69 +107,56 @@ def train_and_evaluate(use_synthetic):
     val_dataset = DnDDataset(X_val_scaled, y_val)
     test_dataset = DnDDataset(X_test_scaled, y_test)
 
-    if use_synthetic and len(np.unique(is_man_train)) > 1:
-        print("⚖️ Гибридный режим: включаю WeightedRandomSampler для балансировки...")
-        sample_weights = np.where(is_man_train == 1, 10.0, 1.0)
-        sampler = WeightedRandomSampler(
-            weights=sample_weights,
-            num_samples=len(sample_weights),
-            replacement=True
-        )
-        train_loader = DataLoader(train_dataset, batch_size=128, sampler=sampler)
-    else:
-        print("🔄 Моно-режим: использую стандартное перемешивание (Shuffle)...")
-        train_loader = DataLoader(train_dataset, batch_size=128, shuffle=True)
+    train_loader = DataLoader(train_dataset, batch_size=128, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=128, shuffle=False)
+    test_loader = DataLoader(test_dataset, batch_size=128, shuffle=False)
 
+    model = DnDItemRanker(input_size=15)
+    criterion = nn.MSELoss()
+    optimizer = optim.Adam(model.parameters(), lr=0.003)
 
-        val_loader = DataLoader(val_dataset, batch_size=128, shuffle=False)
-        test_loader = DataLoader(test_dataset, batch_size=128, shuffle=False)
+    epochs = 40
+    train_losses, val_losses = [], []
+    best_val_loss = float('inf')
 
-        model = DnDItemRanker(input_size=15)
-        criterion = nn.MSELoss()
-        optimizer = optim.Adam(model.parameters(), lr=0.003)
+    print("\n🚀 Начало обучения...")
+    for epoch in range(epochs):
+        model.train()
+        epoch_train_loss = 0.0
+        for batch_X, batch_y in train_loader:
+            optimizer.zero_grad()
+            outputs = model(batch_X)
+            loss = criterion(outputs, batch_y)
+            loss.backward()
+            optimizer.step()
+            epoch_train_loss += loss.item() * batch_X.size(0)
 
-        epochs = 40
-        train_losses, val_losses = [], []
-        best_val_loss = float('inf')
+        epoch_train_loss /= len(train_loader.dataset)
+        train_losses.append(epoch_train_loss)
 
-        print("\n🚀 Начало обучения...")
-        for epoch in range(epochs):
-            model.train()
-            epoch_train_loss = 0.0
-            for batch_X, batch_y in train_loader:
-                optimizer.zero_grad()
+        model.eval()
+        epoch_val_loss = 0.0
+        with torch.no_grad():
+            for batch_X, batch_y in val_loader:
                 outputs = model(batch_X)
                 loss = criterion(outputs, batch_y)
-                loss.backward()
-                optimizer.step()
-                epoch_train_loss += loss.item() * batch_X.size(0)
+                epoch_val_loss += loss.item() * batch_X.size(0)
 
-            epoch_train_loss /= len(train_loader.dataset)
-            train_losses.append(epoch_train_loss)
+        epoch_val_loss /= len(val_loader.dataset)
+        val_losses.append(epoch_val_loss)
 
-            model.eval()
-            epoch_val_loss = 0.0
-            with torch.no_grad():
-                for batch_X, batch_y in val_loader:
-                    outputs = model(batch_X)
-                    loss = criterion(outputs, batch_y)
-                    epoch_val_loss += loss.item() * batch_X.size(0)
+        if epoch_val_loss < best_val_loss:
+            best_val_loss = epoch_val_loss
+            torch.save(model.state_dict(), 'dnd_hybrid_weights.pth')
+            is_best = "⭐"
+        else:
+            is_best = ""
 
-            epoch_val_loss /= len(val_loader.dataset)
-            val_losses.append(epoch_val_loss)
+        if (epoch + 1) % 5 == 0 or is_best:
+            print(
+                f"Эпоха [{epoch + 1}/{epochs}] | Train MSE: {epoch_train_loss:.4f} | Val MSE: {epoch_val_loss:.4f} {is_best}")
 
-            if epoch_val_loss < best_val_loss:
-                best_val_loss = epoch_val_loss
-                torch.save(model.state_dict(), 'dnd_hybrid_weights.pth')
-                is_best = "⭐"
-            else:
-                is_best = ""
-
-            if (epoch + 1) % 5 == 0 or is_best:
-                print(
-                    f"Эпоха [{epoch + 1}/{epochs}] | Train MSE: {epoch_train_loss:.4f} | Val MSE: {epoch_val_loss:.4f} {is_best}")
-
-        model.load_state_dict(torch.load('dnd_hybrid_weights.pth', weights_only=True))
+    model.load_state_dict(torch.load('dnd_hybrid_weights.pth', weights_only=True))
 
     # ==========================================
     # 4. АНАЛИТИКА
@@ -201,32 +165,54 @@ def train_and_evaluate(use_synthetic):
     with torch.no_grad():
         y_pred = model(torch.tensor(X_test_scaled, dtype=torch.float32)).numpy().flatten()
 
-    # --- 1. Технические метрики (Регрессия) ---
+    # --- 1. Технические метрики ---
     mse = mean_squared_error(y_test, y_pred)
     mae = mean_absolute_error(y_test, y_pred)
+    mbe = np.mean(y_pred - y_test)
 
+    # --- Детализированный анализ локального смещения (Шаг 0.05) ---
+    df_analysis = pd.DataFrame({
+        'y_true': y_test,
+        'y_pred': y_pred,
+        'residual': y_pred - y_test
+    })
+
+    bins = np.arange(0.0, 1.05, 0.05)
+    df_analysis['score_bucket'] = pd.cut(df_analysis['y_pred'], bins=bins, include_lowest=True)
+    bias_by_bucket = df_analysis.groupby('score_bucket', observed=False)['residual'].mean()
+    bias_by_bucket = bias_by_bucket.ffill().bfill()
+
+    # АВТОМАТИЗАЦИЯ: Инвертируем смещение (минус на минус) и сохраняем в JSON
+    calibration_lut = [-float(mbe) for mbe in bias_by_bucket.values]
+
+    with open('calibration_lut.json', 'w') as f:
+        json.dump(calibration_lut, f)
+
+    print(f"\n✅ Таблица калибровки (LUT) успешно сохранена в 'calibration_lut.json' ({len(calibration_lut)} бакетов).")
     # --- 2. Бизнес-метрики (Ранжирование) ---
     spearman_corr, _ = spearmanr(y_test, y_pred)
 
     k_val = min(50, len(y_test))
-    ndcg_k = ndcg_score(y_test.reshape(1, -1), y_pred.reshape(1, -1), k=k_val)
-
-    top_k_indices = np.argsort(y_pred)[::-1][:k_val]
-    real_scores_in_top = y_test[top_k_indices]
-    precision_k = np.sum(real_scores_in_top >= 0.70) / k_val # значение должно изменяться под выборку
+    if k_val > 1:
+        ndcg_k = ndcg_score(y_test.reshape(1, -1), y_pred.reshape(1, -1), k=k_val)
+        top_k_indices = np.argsort(y_pred)[::-1][:k_val]
+        real_scores_in_top = y_test[top_k_indices]
+        precision_k = np.sum(real_scores_in_top >= 0.70) / k_val
+    else:
+        ndcg_k, precision_k = 0.0, 0.0
 
     print("\n" + "=" * 50)
     print(" 📊 МЕТРИКИ ДЛЯ ОТЧЕТА (TEST SET) ")
     print("=" * 50)
     print("--- Технические метрики ---")
-    print(f"MSE: {mse:.4f} | MAE: {mae:.4f}")
+    print(f"MSE: {mse:.4f} | MAE: {mae:.4f} | MBE (Bias): {mbe:.4f}")
     print("\n--- Бизнес-метрики (Ранжирование) ---")
-    print(f"Spearman Corr: {spearman_corr:.4f} (ближе к 1.0 = идеальная сортировка всей базы)")
-    print(f"NDCG@{k_val}:      {ndcg_k:.4f} (насколько идеален Топ-{k_val})")
+    print(f"Spearman Corr: {spearman_corr:.4f} (ближе к 1.0 = идеальная сортировка)")
+    print(f"NDCG@{k_val}:      {ndcg_k:.4f} (качество Топ-{k_val})")
     print(f"Precision@{k_val}: {precision_k:.1%} (доля хитов с Y >= 0.70 в Топ-{k_val})")
     print("=" * 50)
 
-    os.makedirs("hybrid_report_plots", exist_ok=True)
+    os.makedirs("model_report_plots", exist_ok=True)
 
     # 1. Кривая обучения
     plt.figure()
@@ -236,17 +222,17 @@ def train_and_evaluate(use_synthetic):
     plt.xlabel('Эпохи')
     plt.ylabel('Loss (MSE)')
     plt.legend()
-    plt.savefig('hybrid_report_plots/1_hybrid_learning_curve.png', dpi=300)
+    plt.savefig('model_report_plots/1_learning_curve.png', dpi=300)
     plt.close()
 
     # 2. Предсказания vs Реальность
     plt.figure()
-    plt.scatter(y_test, y_pred, alpha=0.3, color='green', s=10)
+    plt.scatter(y_test, y_pred, alpha=0.5, color='green', s=15)
     plt.plot([0, 1], [0, 1], color='red', linestyle='--', linewidth=2)
     plt.title('Предсказания vs Реальность (Test Set)', fontsize=14, fontweight='bold')
-    plt.xlabel('Реальный Target Y')
+    plt.xlabel('Реальный Target Y (LLM Score)')
     plt.ylabel('Предсказание Модели')
-    plt.savefig('hybrid_report_plots/2_hybrid_predictions.png', dpi=300)
+    plt.savefig('model_report_plots/2_predictions.png', dpi=300)
     plt.close()
 
     # 3. Распределение
@@ -256,18 +242,30 @@ def train_and_evaluate(use_synthetic):
     plt.title('Распределение предсказаний на Test Set', fontsize=14, fontweight='bold')
     plt.xlabel('Скор (Relevance)')
     plt.legend()
-    plt.savefig('hybrid_report_plots/3_hybrid_distribution.png', dpi=300)
+    plt.savefig('model_report_plots/3_distribution.png', dpi=300)
     plt.close()
+
+    # 4. График остатков и Байоса (Residuals & Bias)
+    residuals = y_pred - y_test
+    mbe = np.mean(residuals)  # Считаем Bias еще раз для графика
+
+    plt.figure()
+    sns.histplot(residuals, bins=50, kde=True, color='teal', stat="density")
+    plt.axvline(x=0, color='red', linestyle='--', linewidth=2, label='Идеал (Ошибка = 0)')
+    plt.axvline(x=mbe, color='blue', linestyle='-', linewidth=2, label=f'Смещение (Bias): {mbe:.4f}')
+
+    plt.title('Распределение остатков (Анализ систематического смещения)', fontsize=14, fontweight='bold')
+    plt.xlabel('Величина ошибки (Prediction - True)')
+    plt.ylabel('Плотность (Density)')
+    plt.legend()
+    plt.savefig('model_report_plots/4_residuals_bias.png', dpi=300)
+    plt.close()
+
+    print("\n✅ Графики аналитики сохранены в папку 'model_report_plots'.")
 
 
 if __name__ == "__main__":
     print("\n" + "=" * 50)
-    print(" 🧠 НАСТРОЙКА ОБУЧЕНИЯ ")
+    print(" 🧠 ЗАПУСК ОБУЧЕНИЯ МОДЕЛИ ")
     print("=" * 50)
-    print("1 - Гибридный режим (Синтетика + Ручная разметка) [По умолчанию]")
-    print("2 - Моно-режим (ТОЛЬКО Ручная разметка)")
-
-    choice = input("\nВаш выбор (1/2): ").strip()
-    use_synthetic_flag = False if choice == '2' else True
-
-    train_and_evaluate(use_synthetic=use_synthetic_flag)
+    train_and_evaluate()
