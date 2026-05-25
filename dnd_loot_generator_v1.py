@@ -38,7 +38,7 @@ console = Console()
 def roll_final_loot(valid_items, party_level):
     console.print("\n[bold cyan]🎲 Бросаем виртуальные кубики...[/bold cyan]")
 
-    if random.random() < 0.05:
+    if random.random() < 0.01:
         console.print(Panel(
             "[bold white]Выпала странная БЕЗДЕЛУШКА[/bold white]\n[dim](бросьте d100 по таблице Trinkets в Книге Игрока).[/dim]",
             title="[bold yellow]🎲 СЛУЧАЙНОСТЬ[/bold yellow]",
@@ -113,7 +113,7 @@ class SmartLootGenerator:
 
             except chromadb.errors.InvalidCollectionException:
                 console.print(
-                    "[bold red]⚠️ Ошибка: Коллекция 'magic_items' не найдена. Сначала запусти data_pipeline.py![/bold red]")
+                    "[bold red]⚠️ Ошибка: Коллекция 'magic_items' не найдена.[/bold red]")
                 exit()
 
             try:
@@ -121,7 +121,7 @@ class SmartLootGenerator:
                     self.preprocessor = pickle.load(f)
             except FileNotFoundError:
                 console.print(
-                    "[bold red]⚠️ Ошибка: Файл 'preprocessor_hybrid.pkl' не найден. Запустите train_hybrid_evaluate.py![/bold red]")
+                    "[bold red]⚠️ Ошибка: Файл 'preprocessor_hybrid.pkl' не найден.[/bold red]")
                 exit()
 
             try:
@@ -129,7 +129,7 @@ class SmartLootGenerator:
                     self.calibration_lut = json.load(f)
             except FileNotFoundError:
                 console.print(
-                    "[bold yellow]⚠️ 'calibration_lut.json' не найден. Калибровка отключена. Запустите train_hybrid_evaluate.py для максимальной точности![/bold yellow]")
+                    "[bold yellow]⚠️ 'calibration_lut.json' не найден. Калибровка отключена.[/bold yellow]")
                 self.calibration_lut = [0.0] * 20
 
             self.model = DnDItemRanker(input_size=15)
@@ -341,13 +341,17 @@ if __name__ == "__main__":
             break
 
         try:
-            lvl_input = console.input("[bold cyan]⚔️  Уровень группы (1-20):[/bold cyan] ").strip().lower()
+            dyn_lvl = random.randint(1, 20)
+            console.print(f"[bold cyan]⚔️  Уровень группы (1-20)[/bold cyan] [dim](Например: {dyn_lvl}):[/dim]")
+            lvl_input = console.input("   [bold]>[/bold] ").strip().lower()
             if lvl_input in ['q', 'й']: break
-            party_level = int(lvl_input)
+            party_level = int(lvl_input) if lvl_input else dyn_lvl
 
-            imp_input = console.input("[bold red]🔥 Важность боя (0.0 - 1.0):[/bold red] ").strip().lower()
+            dyn_imp = round(random.uniform(0.1, 1.0), 2)
+            console.print(f"[bold red]🔥 Важность боя (0.0 - 1.0)[/bold red] [dim](Например: {dyn_imp}):[/dim]")
+            imp_input = console.input("   [bold]>[/bold] ").strip().lower()
             if imp_input in ['q', 'й']: break
-            story_importance = float(imp_input)
+            story_importance = float(imp_input) if imp_input else dyn_imp
 
         except ValueError:
             console.print("[bold red]⚠️ Ошибка: Вводите только числа![/bold red]")

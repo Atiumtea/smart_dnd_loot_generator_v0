@@ -25,8 +25,10 @@ def set_seed(seed=42):
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
 
+
 sns.set_theme(style="whitegrid")
 plt.rcParams['figure.figsize'] = (10, 6)
+
 
 # ==========================================
 # 1. ДАТАСЕТ
@@ -41,6 +43,7 @@ class DnDDataset(Dataset):
 
     def __getitem__(self, idx):
         return self.X[idx], self.y[idx]
+
 
 # ==========================================
 # 2. ПОДГОТОВКА ДАННЫХ
@@ -60,6 +63,7 @@ def load_training_data():
     except FileNotFoundError:
         print("❌ Датасет 'llm_gold_standard.csv' не найден. Сначала запусти llm_annotator.py!")
         exit()
+
 
 # ==========================================
 # 3. ОСНОВНОЙ СКРИПТ ОБУЧЕНИЯ
@@ -159,16 +163,15 @@ def train_and_evaluate():
     model.load_state_dict(torch.load('dnd_hybrid_weights.pth', weights_only=True))
 
     # ==========================================
-    # 4. АНАЛИТИКА
+    # 4. АНАЛИТИКА И СОХРАНЕНИЕ LUT
     # ==========================================
     model.eval()
     with torch.no_grad():
         y_pred = model(torch.tensor(X_test_scaled, dtype=torch.float32)).numpy().flatten()
 
-    # --- 1. Технические метрики ---
     mse = mean_squared_error(y_test, y_pred)
     mae = mean_absolute_error(y_test, y_pred)
-    mbe = np.mean(y_pred - y_test)
+    mbe_global = np.mean(y_pred - y_test)
 
     # --- Детализированный анализ локального смещения (Шаг 0.05) ---
     df_analysis = pd.DataFrame({
@@ -182,16 +185,30 @@ def train_and_evaluate():
     bias_by_bucket = df_analysis.groupby('score_bucket', observed=False)['residual'].mean()
     bias_by_bucket = bias_by_bucket.ffill().bfill()
 
-    # АВТОМАТИЗАЦИЯ: Инвертируем смещение (минус на минус) и сохраняем в JSON
-    calibration_lut = [-float(mbe) for mbe in bias_by_bucket.values]
+    # Вывод данных для отчета (как ты просил)
+    print("\n" + "=" * 50)
+    print(" 🔍 ЛОКАЛЬНОЕ СМЕЩЕНИЕ (BIAS ПО СЕГМЕНТАМ 0.05) ")
+    print("=" * 50)
+    for bucket, local_mbe in bias_by_bucket.items():
+        print(f"Диапазон {bucket}: MBE = {local_mbe:+.4f}")
 
+    # Инвертируем смещение (минус на минус) и сохраняем в JSON
+    calibration_lut = [-float(mbe) for mbe in bias_by_bucket.values]
     with open('calibration_lut.json', 'w') as f:
         json.dump(calibration_lut, f)
-
     print(f"\n✅ Таблица калибровки (LUT) успешно сохранена в 'calibration_lut.json' ({len(calibration_lut)} бакетов).")
+
+    # Симуляция работы LUT для графиков
+    def apply_calibration(val):
+        idx = int(val / 0.05)
+        idx = min(max(0, idx), len(calibration_lut) - 1)
+        return val + calibration_lut[idx]
+
+    y_pred_calibrated = np.array([apply_calibration(v) for v in y_pred])
+    y_pred_calibrated = np.clip(y_pred_calibrated, 0.0, 1.0)  # Ограничиваем от 0 до 1
+
     # --- 2. Бизнес-метрики (Ранжирование) ---
     spearman_corr, _ = spearmanr(y_test, y_pred)
-
     k_val = min(50, len(y_test))
     if k_val > 1:
         ndcg_k = ndcg_score(y_test.reshape(1, -1), y_pred.reshape(1, -1), k=k_val)
@@ -205,7 +222,7 @@ def train_and_evaluate():
     print(" 📊 МЕТРИКИ ДЛЯ ОТЧЕТА (TEST SET) ")
     print("=" * 50)
     print("--- Технические метрики ---")
-    print(f"MSE: {mse:.4f} | MAE: {mae:.4f} | MBE (Bias): {mbe:.4f}")
+    print(f"MSE: {mse:.4f} | MAE: {mae:.4f} | MBE (Global Bias): {mbe_global:.4f}")
     print("\n--- Бизнес-метрики (Ранжирование) ---")
     print(f"Spearman Corr: {spearman_corr:.4f} (ближе к 1.0 = идеальная сортировка)")
     print(f"NDCG@{k_val}:      {ndcg_k:.4f} (качество Топ-{k_val})")
@@ -225,7 +242,7 @@ def train_and_evaluate():
     plt.savefig('model_report_plots/1_learning_curve.png', dpi=300)
     plt.close()
 
-    # 2. Предсказания vs Реальность
+    # 2. Предсказания vs Реальность (Сырые)
     plt.figure()
     plt.scatter(y_test, y_pred, alpha=0.5, color='green', s=15)
     plt.plot([0, 1], [0, 1], color='red', linestyle='--', linewidth=2)
@@ -237,7 +254,7 @@ def train_and_evaluate():
 
     # 3. Распределение
     plt.figure()
-    sns.histplot(y_pred, bins=50, kde=True, color='purple', stat="density", label='Предсказания')
+    sns.histplot(y_pred, bins=50, kde=True, color='purple', stat="density", label='Предсказания (до LUT)')
     sns.histplot(y_test, bins=50, kde=True, color='orange', stat="density", alpha=0.4, label='Реальность')
     plt.title('Распределение предсказаний на Test Set', fontsize=14, fontweight='bold')
     plt.xlabel('Скор (Relevance)')
@@ -247,13 +264,10 @@ def train_and_evaluate():
 
     # 4. График остатков и Байоса (Residuals & Bias)
     residuals = y_pred - y_test
-    mbe = np.mean(residuals)  # Считаем Bias еще раз для графика
-
     plt.figure()
     sns.histplot(residuals, bins=50, kde=True, color='teal', stat="density")
     plt.axvline(x=0, color='red', linestyle='--', linewidth=2, label='Идеал (Ошибка = 0)')
-    plt.axvline(x=mbe, color='blue', linestyle='-', linewidth=2, label=f'Смещение (Bias): {mbe:.4f}')
-
+    plt.axvline(x=mbe_global, color='blue', linestyle='-', linewidth=2, label=f'Смещение (Bias): {mbe_global:.4f}')
     plt.title('Распределение остатков (Анализ систематического смещения)', fontsize=14, fontweight='bold')
     plt.xlabel('Величина ошибки (Prediction - True)')
     plt.ylabel('Плотность (Density)')
@@ -261,7 +275,28 @@ def train_and_evaluate():
     plt.savefig('model_report_plots/4_residuals_bias.png', dpi=300)
     plt.close()
 
-    print("\n✅ Графики аналитики сохранены в папку 'model_report_plots'.")
+    # 5. НОВЫЙ: Сравнение предсказаний ДО и ПОСЛЕ калибровки (Side-by-Side)
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6), sharey=True)
+
+    # Левый график (ДО)
+    axes[0].scatter(y_test, y_pred, alpha=0.4, color='green', s=15)
+    axes[0].plot([0, 1], [0, 1], color='red', linestyle='--', linewidth=2)
+    axes[0].set_title('ДО калибровки (Сырые предсказания)', fontsize=12, fontweight='bold')
+    axes[0].set_xlabel('Реальный Target Y')
+    axes[0].set_ylabel('Предсказание Модели')
+
+    # Правый график (ПОСЛЕ)
+    axes[1].scatter(y_test, y_pred_calibrated, alpha=0.4, color='blue', s=15)
+    axes[1].plot([0, 1], [0, 1], color='red', linestyle='--', linewidth=2)
+    axes[1].set_title('ПОСЛЕ LUT-калибровки', fontsize=12, fontweight='bold')
+    axes[1].set_xlabel('Реальный Target Y')
+
+    plt.suptitle('Эффект применения табличной калибровки (LUT) на тестовой выборке', fontsize=16, fontweight='bold')
+    plt.tight_layout()
+    plt.savefig('model_report_plots/5_calibration_effect.png', dpi=300)
+    plt.close()
+
+    print("✅ Графики аналитики сохранены в папку 'model_report_plots'.")
 
 
 if __name__ == "__main__":
