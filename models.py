@@ -214,6 +214,7 @@ CLASS_LORE = {
         }
     }
 }
+
 # ==========================================
 # 3. МАССИВЫ ДЛЯ ГЕНЕРАЦИИ ПРИМЕРОВ (UI)
 # ==========================================
@@ -296,7 +297,6 @@ def get_type_ohe(item_type_str: str) -> list:
         ohe[-1] = 1.0
     return ohe
 
-
 def build_party_semantics(party_input_string: str) -> tuple[str, list[str]]:
     party_lower = party_input_string.lower()
     enriched_parts = []
@@ -363,7 +363,6 @@ def get_tier_brackets(rarity_val: int) -> tuple[int, int]:
         6: (17, 20)   # Artifact
     }
     return mapping.get(rarity_val, (1, 3))
-
 
 def calculate_level_delta(item_rarity_val: int, party_level: int) -> int:
     min_lvl, max_lvl = get_tier_brackets(item_rarity_val)

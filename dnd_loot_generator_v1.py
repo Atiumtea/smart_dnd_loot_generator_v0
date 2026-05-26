@@ -1,4 +1,7 @@
 import os
+import sys
+import subprocess
+import time
 import logging
 import warnings
 
@@ -15,7 +18,6 @@ import numpy as np
 import pickle
 import random
 import json
-import re
 import chromadb
 import chromadb.errors
 from sentence_transformers import SentenceTransformer, util
@@ -33,7 +35,6 @@ logging.getLogger("sentence_transformers").setLevel(logging.ERROR)
 warnings.filterwarnings("ignore")
 
 console = Console()
-
 
 def roll_final_loot(valid_items, party_level):
     console.print("\n[bold cyan]🎲 Бросаем виртуальные кубики...[/bold cyan]")
@@ -93,7 +94,6 @@ def roll_final_loot(valid_items, party_level):
         padding=(1, 2)
     ))
 
-
 class SmartLootGenerator:
     def __init__(self):
         with console.status("[bold green]Загрузка компонентов ИИ и векторной БД...[/bold green]", spinner="dots"):
@@ -113,7 +113,7 @@ class SmartLootGenerator:
 
             except chromadb.errors.InvalidCollectionException:
                 console.print(
-                    "[bold red]⚠️ Ошибка: Коллекция 'magic_items' не найдена.[/bold red]")
+                    "[bold red]⚠️ Ошибка: Коллекция 'magic_items' не найдена. Запустите Data Pipeline (parser.py) из главного меню![/bold red]")
                 exit()
 
             try:
@@ -121,7 +121,7 @@ class SmartLootGenerator:
                     self.preprocessor = pickle.load(f)
             except FileNotFoundError:
                 console.print(
-                    "[bold red]⚠️ Ошибка: Файл 'preprocessor_hybrid.pkl' не найден.[/bold red]")
+                    "[bold red]⚠️ Ошибка: Файл 'preprocessor_hybrid.pkl' не найден. Запустите обучение модели из меню![/bold red]")
                 exit()
 
             try:
@@ -129,7 +129,7 @@ class SmartLootGenerator:
                     self.calibration_lut = json.load(f)
             except FileNotFoundError:
                 console.print(
-                    "[bold yellow]⚠️ 'calibration_lut.json' не найден. Калибровка отключена.[/bold yellow]")
+                    "[bold yellow]⚠️ 'calibration_lut.json' не найден. Калибровка отключена. Запустите обучение для генерации файла![/bold yellow]")
                 self.calibration_lut = [0.0] * 20
 
             self.model = DnDItemRanker(input_size=15)
@@ -289,8 +289,6 @@ class SmartLootGenerator:
         for i, item in enumerate(candidates):
             raw_score = float(predictions[i])
             calibrated_score = self.calibrate_score(raw_score)
-
-            # Сохраняем итоговый скор в границах от 0 до 1
             item['final_score'] = min(1.0, max(0.0, calibrated_score))
 
         candidates.sort(key=lambda x: x['final_score'], reverse=True)
@@ -312,7 +310,8 @@ class SmartLootGenerator:
 
         for i in range(min(3, len(candidates))):
             c = candidates[i]
-            status = "[bold green]✅ В ПУЛЕ[/bold green]" if c['final_score'] >= base_score_threshold else "[bold red]❌ ОТКЛОНЕН[/bold red]"
+            status = "[bold green]✅ В ПУЛЕ[/bold green]" if c[
+                                                                'final_score'] >= base_score_threshold else "[bold red]❌ ОТКЛОНЕН[/bold red]"
             score_str = f"{c['final_score']:.3f} ([dim]{c['loc_score']:.2f} | {c['party_score']:.2f} | {c['delta']}[/dim])"
 
             source_short = c['source'][:15] + "..." if len(c['source']) > 15 else c['source']
@@ -322,22 +321,24 @@ class SmartLootGenerator:
 
         return valid_candidates
 
-
-if __name__ == "__main__":
+def run_generator():
     os.system('cls' if os.name == 'nt' else 'clear')
     console.print(Rule(title="[bold green]🐉 УМНЫЙ ГЕНЕРАТОР ЛУТА D&D 5e 🐉[/bold green]", style="green"))
     console.print()
 
-    generator = SmartLootGenerator()
-
-    generator.configure_sources()
+    try:
+        generator = SmartLootGenerator()
+        generator.configure_sources()
+    except Exception as e:
+        console.print(f"\n[bold red]Ошибка инициализации: {e}[/bold red]")
+        return
 
     while True:
         console.print(Rule(style="dim"))
         command = console.input(
-            "[bold white]Нажмите [Enter] для генерации или 'q' для выхода:[/bold white] ").strip().lower()
+            "[bold white]Нажмите [Enter] для генерации или 'q' для выхода в меню:[/bold white] ").strip().lower()
         if command in ['q', 'й']:
-            console.print("[italic green]Удачных игр![/italic green] 🎲")
+            console.print("[italic green]Возврат в главное меню...[/italic green] 🎲")
             break
 
         try:
@@ -388,3 +389,53 @@ if __name__ == "__main__":
             )
 
         roll_final_loot(pool, party_level)
+
+def main_menu():
+    while True:
+        os.system('cls' if os.name == 'nt' else 'clear')
+        console.print(Rule(title="[bold green]⚙️ ПУЛЬТ УПРАВЛЕНИЯ ML-ПАЙПЛАЙНОМ ⚙️[/bold green]", style="green"))
+
+        table = Table(box=box.MINIMAL_DOUBLE_HEAD)
+        table.add_column("Команда", justify="center", style="cyan")
+        table.add_column("Модуль", style="bold white")
+        table.add_column("Описание процесса", style="dim")
+
+        table.add_row("1", "Data Pipeline (parser.py)", "Сбор данных по API, векторизация и обновление ChromaDB")
+        table.add_row("2", "Data Annotation (llm_annotator.py)", "Генерация датасета через Gatekeeper эвристики и LLM")
+        table.add_row("3", "Model Training (train_hybrid_evaluate.py)",
+                      "Обучение нейросети, расчет метрик и обновление LUT-калибровки")
+        table.add_row("4", "Loot Generator (Inference)", "Запуск финального боевого генератора наград")
+        table.add_row("q", "Выход", "Закрыть пульт управления")
+
+        console.print(table)
+
+        choice = console.input("\n[bold yellow]Выберите команду:[/bold yellow] ").strip().lower()
+
+        if choice == '1':
+            console.print("\n[bold cyan]🚀 Запуск parser.py...[/bold cyan]")
+            subprocess.run([sys.executable, "parser.py"])
+            console.input("\n[dim]Нажмите Enter для возврата в меню...[/dim]")
+
+        elif choice == '2':
+            console.print("\n[bold cyan]🚀 Запуск llm_annotator.py...[/bold cyan]")
+            subprocess.run([sys.executable, "llm_annotator.py"])
+            console.input("\n[dim]Нажмите Enter для возврата в меню...[/dim]")
+
+        elif choice == '3':
+            console.print("\n[bold cyan]🚀 Запуск train_hybrid_evaluate.py...[/bold cyan]")
+            subprocess.run([sys.executable, "train_hybrid_evaluate.py"])
+            console.input("\n[dim]Нажмите Enter для возврата в меню...[/dim]")
+
+        elif choice == '4':
+            run_generator()
+
+        elif choice in ['q', 'й']:
+            console.print("[italic green]Завершение работы. Удачных игр![/italic green] 👋")
+            break
+
+        else:
+            console.print("[red]❌ Неизвестная команда. Выберите пункт от 1 до 4 или 'q' для выхода.[/red]")
+            time.sleep(1.5)
+
+if __name__ == "__main__":
+    main_menu()

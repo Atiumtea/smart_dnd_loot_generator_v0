@@ -83,7 +83,6 @@ def generate_dynamic_scenario():
 
 
 def normalize_for_llm(ml_score, max_expected=0.45):
-    """Переводит косинусное расстояние в понятную для LLM шкалу от 1.0 до 10.0"""
     normalized = (ml_score / max_expected) * 10.0
     return min(10.0, max(0.1, round(normalized, 1)))
 

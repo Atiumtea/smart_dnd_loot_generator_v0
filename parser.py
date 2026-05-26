@@ -131,5 +131,6 @@ def build_knowledge_base():
 
     print("\n✅ Готово! Единый пайплайн данных успешно выполнен.")
 
+
 if __name__ == "__main__":
     build_knowledge_base()

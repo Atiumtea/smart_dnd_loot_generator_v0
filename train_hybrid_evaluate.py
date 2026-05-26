@@ -17,7 +17,6 @@ import os
 import random
 from models import DnDItemRanker, ITEM_TYPES
 
-
 def set_seed(seed=42):
     random.seed(seed)
     np.random.seed(seed)
@@ -25,10 +24,8 @@ def set_seed(seed=42):
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
 
-
 sns.set_theme(style="whitegrid")
 plt.rcParams['figure.figsize'] = (10, 6)
-
 
 # ==========================================
 # 1. ДАТАСЕТ
@@ -43,7 +40,6 @@ class DnDDataset(Dataset):
 
     def __getitem__(self, idx):
         return self.X[idx], self.y[idx]
-
 
 # ==========================================
 # 2. ПОДГОТОВКА ДАННЫХ
@@ -63,7 +59,6 @@ def load_training_data():
     except FileNotFoundError:
         print("❌ Датасет 'llm_gold_standard.csv' не найден. Сначала запусти llm_annotator.py!")
         exit()
-
 
 # ==========================================
 # 3. ОСНОВНОЙ СКРИПТ ОБУЧЕНИЯ
@@ -185,27 +180,24 @@ def train_and_evaluate():
     bias_by_bucket = df_analysis.groupby('score_bucket', observed=False)['residual'].mean()
     bias_by_bucket = bias_by_bucket.ffill().bfill()
 
-    # Вывод данных для отчета (как ты просил)
     print("\n" + "=" * 50)
     print(" 🔍 ЛОКАЛЬНОЕ СМЕЩЕНИЕ (BIAS ПО СЕГМЕНТАМ 0.05) ")
     print("=" * 50)
     for bucket, local_mbe in bias_by_bucket.items():
         print(f"Диапазон {bucket}: MBE = {local_mbe:+.4f}")
 
-    # Инвертируем смещение (минус на минус) и сохраняем в JSON
     calibration_lut = [-float(mbe) for mbe in bias_by_bucket.values]
     with open('calibration_lut.json', 'w') as f:
         json.dump(calibration_lut, f)
     print(f"\n✅ Таблица калибровки (LUT) успешно сохранена в 'calibration_lut.json' ({len(calibration_lut)} бакетов).")
 
-    # Симуляция работы LUT для графиков
     def apply_calibration(val):
         idx = int(val / 0.05)
         idx = min(max(0, idx), len(calibration_lut) - 1)
         return val + calibration_lut[idx]
 
     y_pred_calibrated = np.array([apply_calibration(v) for v in y_pred])
-    y_pred_calibrated = np.clip(y_pred_calibrated, 0.0, 1.0)  # Ограничиваем от 0 до 1
+    y_pred_calibrated = np.clip(y_pred_calibrated, 0.0, 1.0)
 
     # --- 2. Бизнес-метрики (Ранжирование) ---
     spearman_corr, _ = spearmanr(y_test, y_pred)
@@ -297,7 +289,6 @@ def train_and_evaluate():
     plt.close()
 
     print("✅ Графики аналитики сохранены в папку 'model_report_plots'.")
-
 
 if __name__ == "__main__":
     print("\n" + "=" * 50)
