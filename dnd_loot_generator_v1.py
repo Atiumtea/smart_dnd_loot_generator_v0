@@ -66,6 +66,8 @@ def roll_final_loot(valid_items, party_level):
 
     loc_s = chosen_item.get('loc_score', 0)
     party_s = chosen_item.get('party_score', 0)
+    delta = chosen_item.get('delta', 0)
+    synergy = chosen_item.get('synergy', 0)
 
     if party_s > loc_s + 0.1:
         reason = "Этот предмет идеально подходит способностям вашей группы."
@@ -82,8 +84,12 @@ def roll_final_loot(valid_items, party_level):
         f"[bold cyan]Редкость:[/bold cyan] {chosen_item['rarity'].title()}\n"
         f"[bold cyan]Тип:[/bold cyan] {chosen_item['type'].title()}\n"
         f"[bold cyan]Шанс выпадения:[/bold cyan] {drop_chance:.1f}% [dim](при ML Score: {chosen_item['final_score']:.4f})[/dim]\n"
-        f"[bold cyan]Комментарий ИИ:[/bold cyan] [italic green]{reason}[/italic green]\n"
-        f"{'-' * 40}\n"
+        f"[bold cyan]Loc Score (Локация):[/bold cyan] {loc_s:.4f}\n"
+        f"[bold cyan]Party Score (Группа):[/bold cyan] {party_s:.4f}\n"
+        f"[bold cyan]Delta (Разница уровней):[/bold cyan] {delta}\n"
+        f"[bold cyan]Синергия с классами:[/bold cyan] {'Есть' if synergy > 0 else 'Нет'}\n"
+        f"[bold cyan]Комментарий:[/bold cyan] [italic green]{reason}[/italic green]\n"
+        f"[dim]{'─' * 65}[/dim]\n" 
         f"[bold white]Описание:[/bold white]\n{desc}"
     )
 
@@ -91,7 +97,8 @@ def roll_final_loot(valid_items, party_level):
         content,
         title=f"[bold yellow]✨ НАГРАДА: {chosen_item['name'].upper()} ✨[/bold yellow]",
         border_style="green",
-        padding=(1, 2)
+        padding=(1, 2),
+        expand=True
     ))
 
 class SmartLootGenerator:
@@ -138,7 +145,6 @@ class SmartLootGenerator:
         console.print("[dim]✅ ИИ-модули и база данных загружены.[/dim]")
 
     def calibrate_score(self, raw_score):
-        """Высокоточная LUT-калибровка за O(1) с шагом 0.05"""
         idx = int(raw_score / 0.05)
         idx = min(max(0, idx), len(self.calibration_lut) - 1)
         return raw_score + self.calibration_lut[idx]
@@ -301,7 +307,7 @@ class SmartLootGenerator:
             valid_candidates = [c for c in candidates if c['final_score'] >= base_score_threshold]
 
         console.print()
-        table = Table(title="[dim]🛠️ DEBUG: ТОП-3 ПРЕДМЕТА ГЛАЗАМИ ИИ[/dim]", box=box.SIMPLE)
+        table = Table(title="[dim]🛠️ DEBUG: ТОП-3 ПРЕДМЕТА ГЛАЗАМИ модели[/dim]", box=box.SIMPLE)
         table.add_column("Название", style="cyan")
         table.add_column("Редкость", style="magenta")
         table.add_column("Источник", style="yellow")
