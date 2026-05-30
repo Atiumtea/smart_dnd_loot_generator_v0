@@ -118,7 +118,6 @@ def generate_dynamic_scenario():
     return {"loc": loc, "party": party, "level": level, "imp": imp}
 
 
-# ОБНОВЛЕНО: Функция теперь принимает reason_parts (Заметки Гейткипера)
 def ask_llm_auditor(scen, item, reason_parts, synergy_count, party_size, max_retries=15):
     notes_str = ", ".join(reason_parts) if reason_parts else "None. Mechanically perfect."
 
@@ -127,15 +126,15 @@ Your task is to provide a final evaluation (Score from 0.150 to 0.990) based on 
 
 EVALUATION RULES (STRICT):
 1. READ THE "GATEKEEPER NOTES" CAREFULLY. These are mechanical checks performed by the system.
-2. If Gatekeeper Notes indicate "None", you are free to award a high score (0.800 - 0.990) if the narrative fit is excellent.
-3. If Gatekeeper Notes contain warnings (e.g., "Поздно на 3 уровня", "Нулевая синергия", "Дубликат"), you MUST penalize the score. An item with zero synergy or serious level imbalance should NOT score above 0.500, regardless of how cool it is narratively.
+2. If Gatekeeper Notes indicate "None. Mechanically perfect.", you are free to award a high score (0.800 - 0.990) if the narrative fit is excellent.
+3. If Gatekeeper Notes contain warnings (e.g., "Too early", "Zero class synergy", "Duplicate"), you MUST penalize the score. An item with zero synergy or serious level imbalance should NOT score above 0.500, regardless of how cool it is narratively.
 4. Output your analysis and the final float score in JSON format.
 
 OUTPUT STRICTLY IN JSON FORMAT:
 {
   "loc_analysis": "Brief analysis of how the item fits the location",
   "party_analysis": "Brief analysis of how the item fits the party classes",
-  "gatekeeper_integration": "Acknowledge the Gatekeeper Notes and state how much you will penalize the item because of them",
+  "gatekeeper_integration": "Acknowledge the Gatekeeper Notes and state how much you penalized the item because of them",
   "score": <float_number_from_0.150_to_0.990>
 }"""
 
@@ -169,9 +168,9 @@ Perform the analysis and output JSON."""
 
             score = float(result.get("score", 0.3))
             llm_reason = (
-                f"Loc: {result.get('loc_analysis', '')[:40]} | "
-                f"Party: {result.get('party_analysis', '')[:40]} | "
-                f"Gate: {result.get('gatekeeper_integration', 'No data')[:50]}"
+                f"Loc: {result.get('loc_analysis', '')[:35]}... | "
+                f"Party: {result.get('party_analysis', '')[:35]}... | "
+                f"Gate: {result.get('gatekeeper_integration', 'No data')[:45]}..."
             )
             return score, llm_reason
 
@@ -184,15 +183,15 @@ Perform the analysis and output JSON."""
                         time.sleep(0.5)
                         continue
                     else:
-                        return None, "Не удалось переключить ключ API."
+                        return None, "API Key rotation failed."
                 else:
                     wait_time = 15.0 * (attempt + 1)
-                    console.print(f"[yellow]⏳ Задержка API. Ждем {wait_time} сек... (Попытка {attempt + 1})[/yellow]")
+                    console.print(f"[yellow]⏳ API Delay. Waiting {wait_time} sec... (Attempt {attempt + 1})[/yellow]")
                     time.sleep(wait_time)
             else:
-                return None, f"Ошибка API: {str(e)}"
+                return None, f"API Error: {str(e)}"
 
-    return None, "Превышен лимит таймаутов API."
+    return None, "Timeout limit exceeded."
 
 
 # --- ЗАГРУЗКА ---
@@ -258,7 +257,6 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
 
         rarity_str = str(item.get('rarity', 'common')).lower()
         rarity_val = float(get_rarity_val(rarity_str, scen['level']))
-
         delta = calculate_level_delta(rarity_val, scen['level'])
 
         i_type = str(item.get('type', 'wondrous item')).lower()
@@ -271,7 +269,6 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
         for cls in found_base_classes:
             if any(at in i_type for at in CLASS_SYNERGY.get(cls, [])):
                 synergy_count += 1
-
         syn_density = synergy_count / max(1, party_size)
 
         # ==========================================
@@ -281,79 +278,72 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
         reason_parts = []
         force_python = False
 
-        # Нормализация
-        eff_l = max(0.0, l_s - 0.12) / (0.45 - 0.12)
-        eff_p = max(0.0, p_s - 0.12) / (0.45 - 0.12)
-        norm_l = min(1.0, max(0.0, eff_l))
-        norm_p = min(1.0, max(0.0, eff_p))
+        # ПРАВИЛЬНАЯ НОРМАЛИЗАЦИЯ относительно 0.45 (без вычета базы)
+        norm_l = min(1.0, max(0.0, l_s / 0.45))
+        norm_p = min(1.0, max(0.0, p_s / 0.45))
         base_quality = (norm_l + norm_p) / 2.0
 
-        # 1. ПЛАВНЫЙ ШТРАФ УЗКОГО ГОРЛЫШКА (Bottleneck Penalty)
-        # Если предмет идеально подходит пати, но L=0.09 (абсолютно не из этой локации)
+        # 1. ПЛАВНЫЙ БАЗОВЫЙ ФИЛЬТР (вместо хардкода < 0.22)
+        if base_quality < 0.35:
+            penalty_multiplier *= (max(0.01, base_quality) / 0.35) ** 2
+            reason_parts.append(f"Low base relevance ({base_quality:.2f})")
+
+        # 2. ПЛАВНЫЙ ШТРАФ УЗКОГО ГОРЛЫШКА (Bottleneck Penalty)
         bottleneck = min(norm_l, norm_p)
         if bottleneck < 0.18:
-            # Степенная функция: плавно уводит штраф в нуль по мере приближения bottleneck к 0
             bottleneck_penalty = (max(0.001, bottleneck) / 0.18) ** 1.5
             penalty_multiplier *= bottleneck_penalty
             if bottleneck < 0.05:
                 force_python = True
-                reason_parts.append(f"Критический разрыв контекста (Min={bottleneck:.2f})")
+                reason_parts.append(f"Critical context mismatch (Min={bottleneck:.2f})")
             else:
-                reason_parts.append(f"Слабый контекст (Min={bottleneck:.2f})")
+                reason_parts.append(f"Weak context bottleneck (Min={bottleneck:.2f})")
 
-        # 2. ПЛАВНЫЕ СЮЖЕТНЫЕ ОГРАНИЧЕНИЯ (Ожидаемая редкость)
-        # Imp 0.0 -> ожидаем Common (1). Imp 1.0 -> ожидаем Legendary (5).
+        # 3. СЮЖЕТНЫЕ ОГРАНИЧЕНИЯ (Ожидаемая редкость)
         expected_rarity = 1.0 + scen['imp'] * 4.0
         rarity_diff = rarity_val - expected_rarity
-
         if rarity_diff > 0.5:
-            # Обратно-квадратичная зависимость (наказывать плавно)
             severity = (rarity_diff / 1.5) ** 2
             penalty_multiplier *= 1.0 / (1.0 + severity)
-            reason_parts.append(f"Слишком редкий для этого боя (Rare: {rarity_val} vs Exp: {expected_rarity:.1f})")
+            reason_parts.append(f"Too rare (Item: {rarity_val}, Expected: {expected_rarity:.1f})")
 
-        # 3. ПЛАВНЫЙ БАЛАНС УРОВНЕЙ (Квадратичное смягчение)
+        # 4. БАЛАНС УРОВНЕЙ
         if delta > 0:
-            severity_base = (delta / 3.0) ** 2
-            importance_forgiveness = max(0.1, 1.1 - scen['imp'])
-            severity = severity_base * importance_forgiveness
+            severity = ((delta / 3.0) ** 2) * max(0.1, 1.1 - scen['imp'])
             penalty_multiplier *= 1.0 / (1.0 + severity)
-            reason_parts.append(f"Рано на {delta} уровней")
+            reason_parts.append(f"Too early by {delta} levels")
         elif delta < 0:
-            abs_d = abs(delta)
-            severity = (abs_d / 4.0) ** 2 * (0.5 + scen['imp'])
+            severity = ((abs(delta) / 4.0) ** 2) * (0.5 + scen['imp'])
             penalty_multiplier *= 1.0 / (1.0 + severity)
-            reason_parts.append(f"Поздно на {abs_d} уровней")
+            reason_parts.append(f"Too late by {abs(delta)} levels")
 
-        # 4. СМЯГЧЕННАЯ СИНЕРГИЯ И ДУБЛИКАТЫ
+        # 5. СИНЕРГИЯ И ДУБЛИКАТЫ
         if syn_density == 0.0:
-            penalty_multiplier *= 0.65  # Было 0.35
-            reason_parts.append("Нулевая синергия с классами")
+            penalty_multiplier *= 0.65
+            reason_parts.append("Zero class synergy")
         elif syn_density < 0.30:
             penalty_multiplier *= 0.85
-            reason_parts.append("Низкая синергия")
+            reason_parts.append("Low class synergy")
 
         if is_dup == 1.0 and is_consumable == 0.0:
-            penalty_multiplier *= 0.65  # Было 0.20
-            reason_parts.append("Дубликат экипировки")
+            penalty_multiplier *= 0.65
+            reason_parts.append("Duplicate equipment")
 
         # ==========================================
         # МАРШРУТИЗАЦИЯ И БАЛАНСИРОВКА
-        # Порог снижен до 0.40, чтобы больше "спорных" предметов уходило к LLM
         # ==========================================
         is_hard_penalty = force_python or (penalty_multiplier < 0.40)
+        gatekeeper_log = " | ".join(reason_parts) if reason_parts else "None (Perfect)"
 
         if is_hard_penalty:
-            # Undersampling: Режем 80% мусора, чтобы не было пика на нуле
+            # Undersampling: пропускаем 80% мусора
             if random.random() > 0.20:
                 continue
 
-            hard_score = base_quality * penalty_multiplier
-            hard_score += random.gauss(0, 0.005)
+            hard_score = base_quality * penalty_multiplier + random.gauss(0, 0.005)
             target_y = round(max(0.001, min(0.999, hard_score)), 4)
-            reason = "[PYTHON] " + " + ".join(reason_parts) if reason_parts else "[PYTHON] Unknown penalty"
+            final_output_text = f"[magenta][PYTHON] Gatekeeper: {gatekeeper_log}[/magenta]"
         else:
-            # Передаем reason_parts в LLM
             score, llm_reason = ask_llm_auditor(scen, item, reason_parts, synergy_count, party_size)
 
             if score is None:
@@ -362,12 +352,9 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
                 continue
 
             weighted_raw = (norm_l * 0.55) + (norm_p * 0.45)
-            # LLM учитывает штрафы, поэтому мы не умножаем raw_target на penalty_multiplier еще раз!
             raw_target = (score * 0.75) + (weighted_raw * 0.25)
-            noise = random.gauss(0, 0.015)
-
-            target_y = round(max(0.150, min(0.999, raw_target + noise)), 4)
-            reason = f"[AI] {llm_reason}"
+            target_y = round(max(0.150, min(0.999, raw_target + random.gauss(0, 0.015))), 4)
+            final_output_text = f"[magenta][PYTHON] Gatekeeper: {gatekeeper_log}[/magenta]\n[green][AI] LLM: {llm_reason}[/green]"
             time.sleep(1.5)
 
         row_dict = {
@@ -381,12 +368,11 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
 
         pd.DataFrame([row_dict]).to_csv(GOLD_FILE, mode='a', header=False, index=False, sep=';')
 
-        color = "magenta" if "[PYTHON]" in reason else "green"
         progress.console.print(
             f"[dim]Лут:[/dim] [cyan]{item['name'][:25]:<25}[/cyan] | "
             f"[bold white]Y: {target_y:.4f}[/bold white] | "
-            f"[dim]L: {l_s:.3f} | P: {p_s:.3f} | D: {delta} | Syn: {syn_density:.2f}[/dim]\n"
-            f"[italic {color}]{reason}[/italic {color}]\n"
+            f"[dim]L: {l_s:.3f} (N:{norm_l:.2f}) | P: {p_s:.3f} (N:{norm_p:.2f}) | D: {delta} | Syn: {syn_density:.2f}[/dim]\n"
+            f"{final_output_text}\n"
         )
 
         success_count += 1
