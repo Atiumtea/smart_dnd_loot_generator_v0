@@ -167,10 +167,12 @@ Perform the analysis and output JSON."""
                 result = json.loads(match.group(0)) if match else {"score": 0.3}
 
             score = float(result.get("score", 0.3))
+
+            # Убрана обрезка символов ([:35]), текст выводится полностью
             llm_reason = (
-                f"Loc: {result.get('loc_analysis', '')[:35]}... | "
-                f"Party: {result.get('party_analysis', '')[:35]}... | "
-                f"Gate: {result.get('gatekeeper_integration', 'No data')[:45]}..."
+                f"Loc: {result.get('loc_analysis', '')} | "
+                f"Party: {result.get('party_analysis', '')} | "
+                f"Gate: {result.get('gatekeeper_integration', 'No data')}"
             )
             return score, llm_reason
 
@@ -278,12 +280,12 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
         reason_parts = []
         force_python = False
 
-        # ПРАВИЛЬНАЯ НОРМАЛИЗАЦИЯ относительно 0.45 (без вычета базы)
+        # Нормализация
         norm_l = min(1.0, max(0.0, l_s / 0.45))
         norm_p = min(1.0, max(0.0, p_s / 0.45))
         base_quality = (norm_l + norm_p) / 2.0
 
-        # 1. ПЛАВНЫЙ БАЗОВЫЙ ФИЛЬТР (вместо хардкода < 0.22)
+        # 1. ПЛАВНЫЙ БАЗОВЫЙ ФИЛЬТР
         if base_quality < 0.35:
             penalty_multiplier *= (max(0.01, base_quality) / 0.35) ** 2
             reason_parts.append(f"Low base relevance ({base_quality:.2f})")
@@ -307,9 +309,11 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
             penalty_multiplier *= 1.0 / (1.0 + severity)
             reason_parts.append(f"Too rare (Item: {rarity_val}, Expected: {expected_rarity:.1f})")
 
-        # 4. БАЛАНС УРОВНЕЙ
+        # 4. БАЛАНС УРОВНЕЙ (Строгий контроль превышения)
         if delta > 0:
-            severity = ((delta / 3.0) ** 2) * max(0.1, 1.1 - scen['imp'])
+            # Новая формула: агрессивна к превышению даже на 1 уровень,
+            # но прощает, если сюжетная важность (imp) стремится к 1.0
+            severity = (delta ** 1.5) * max(0.05, 0.85 - scen['imp']) * 4.0
             penalty_multiplier *= 1.0 / (1.0 + severity)
             reason_parts.append(f"Too early by {delta} levels")
         elif delta < 0:
@@ -333,7 +337,7 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
         # МАРШРУТИЗАЦИЯ И БАЛАНСИРОВКА
         # ==========================================
         is_hard_penalty = force_python or (penalty_multiplier < 0.40)
-        gatekeeper_log = " | ".join(reason_parts) if reason_parts else "None (Perfect)"
+        gatekeeper_log = " | ".join(reason_parts) if reason_parts else "None. Mechanically perfect."
 
         if is_hard_penalty:
             # Undersampling: пропускаем 80% мусора
@@ -342,7 +346,7 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
 
             hard_score = base_quality * penalty_multiplier + random.gauss(0, 0.005)
             target_y = round(max(0.001, min(0.999, hard_score)), 4)
-            final_output_text = f"[magenta][PYTHON] Gatekeeper: {gatekeeper_log}[/magenta]"
+            final_output_text = f"[magenta][Gatekeeper]: {gatekeeper_log}[/magenta]"
         else:
             score, llm_reason = ask_llm_auditor(scen, item, reason_parts, synergy_count, party_size)
 
@@ -354,7 +358,7 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
             weighted_raw = (norm_l * 0.55) + (norm_p * 0.45)
             raw_target = (score * 0.75) + (weighted_raw * 0.25)
             target_y = round(max(0.150, min(0.999, raw_target + random.gauss(0, 0.015))), 4)
-            final_output_text = f"[magenta][PYTHON] Gatekeeper: {gatekeeper_log}[/magenta]\n[green][AI] LLM: {llm_reason}[/green]"
+            final_output_text = f"[magenta][Gatekeeper]: {gatekeeper_log}[/magenta]\n[green][LLM]: {llm_reason}[/green]"
             time.sleep(1.5)
 
         row_dict = {

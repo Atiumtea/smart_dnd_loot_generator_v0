@@ -68,8 +68,9 @@ def train_and_evaluate():
     df = load_training_data()
 
     type_features = [f'type_{t.replace(" ", "_")}' for t in ITEM_TYPES]
-    continuous_features = ['loc_score', 'party_score', 'story_importance', 'level_rarity_delta']
-    binary_features = ['is_duplicate', 'synergy_flag'] + type_features
+    continuous_features = ['loc_score', 'party_score', 'story_importance', 'rarity_val', 'level_rarity_delta',
+                           'synergy_density']
+    binary_features = ['is_consumable', 'is_duplicate'] + type_features
     features = continuous_features + binary_features
 
     for col in features + ['target_y']:
