@@ -29,37 +29,69 @@ warnings.filterwarnings("ignore")
 
 console = Console()
 
-# --- ВЫБОР API КЛЮЧА ---
+# --- ВЫБОР API КЛЮЧА И НАСТРОЙКА АВТОПЕРЕКЛЮЧЕНИЯ ---
 console.print()
 console.print("[bold yellow]Доступные ключи API:[/bold yellow]")
-console.print("1: GROQ_API_KEY_1")
-console.print("2: GROQ_API_KEY_2")
-console.print("3: GROQ_API_KEY_3")
-console.print("4: GROQ_API_KEY_4")
-console.print("5: GROQ_API_KEY_5")
-console.print("6: GROQ_API_KEY_6")
-console.print("7: GROQ_API_KEY_7")
+for i in range(1, 8):
+    console.print(f"{i}: GROQ_API_KEY_{i}")
 console.print()
 
-console.print("[bold green]Выберите ключ (введите число от 1 до 7):[/bold green]", end=" ")
-key_choice = console.input("").strip()
+console.print("[bold green]Выберите ключ (введите 1-7) или напишите 'auto' для автопереключения:[/bold green]", end=" ")
+key_choice = console.input("").strip().lower()
 
-if key_choice not in ['1', '2', '3', '4', '5', '6', '7']:
-    console.print("[bold red]Неверный ввод. По умолчанию выбран GROQ_API_KEY_1.[/bold red]")
-    key_choice = '1'
+auto_mode = False
+current_key_idx = 1
+client = None
 
-env_key_name = f"GROQ_API_KEY_{key_choice}"
-API_KEY = os.environ.get(env_key_name)
+def init_client(key_num):
+    env_key_name = f"GROQ_API_KEY_{key_num}"
+    api_key = os.environ.get(env_key_name)
+    if not api_key:
+        return None, env_key_name
+    return Groq(api_key=api_key, timeout=30.0), env_key_name
 
-if not API_KEY:
-    console.print(f"[bold red]ОШИБКА: Не найден ключ {env_key_name} в файле .env![/bold red]")
-    exit()
+if key_choice == 'auto':
+    auto_mode = True
+    client, env_key_name = init_client(current_key_idx)
+    if not client:
+        console.print(f"[bold red]ОШИБКА: Стартовый ключ {env_key_name} не найден в .env![/bold red]")
+        exit()
+    console.print(f"\n[bold green]✅ Включен АВТОРЕЖИМ. Старт с: {env_key_name}[/bold green]\n")
+elif key_choice in ['1', '2', '3', '4', '5', '6', '7']:
+    current_key_idx = int(key_choice)
+    client, env_key_name = init_client(current_key_idx)
+    if not client:
+        console.print(f"[bold red]ОШИБКА: Не найден ключ {env_key_name} в файле .env![/bold red]")
+        exit()
+    console.print(f"\n[bold green]✅ Подключен ключ: {env_key_name}[/bold green]\n")
+else:
+    console.print("[bold red]Неверный ввод. Выбран GROQ_API_KEY_1 без автопереключения.[/bold red]")
+    client, env_key_name = init_client(1)
+    if not client:
+        console.print("[bold red]ОШИБКА: Ключ GROQ_API_KEY_1 отсутствует в .env![/bold red]")
+        exit()
 
-console.print()
-console.print(f"[bold green]✅ Подключен ключ: {env_key_name}[/bold green]")
-console.print()
+def rotate_api_key(attempts=0):
+    global client, current_key_idx
+    if attempts >= 7:
+        console.print("[bold red]❌ Все 7 ключей невалидны или отсутствуют в .env![/bold red]")
+        return False
 
-client = Groq(api_key=API_KEY, timeout=30.0)
+    current_key_idx += 1
+    if current_key_idx > 7:
+        current_key_idx = 1
+        console.print("[yellow]⏳ Прошли все 7 ключей. Возвращаемся к 1-му. Ждем 5 сек...[/yellow]")
+        time.sleep(5)
+
+    new_client, env_key_name = init_client(current_key_idx)
+    if new_client:
+        client = new_client
+        console.print(f"\n[bold magenta]🔄 Лимит! Авто-переключение на: {env_key_name}[/bold magenta]")
+        return True
+    else:
+        # Если ключ пропущен в .env, ищем следующий
+        return rotate_api_key(attempts + 1)
+
 MODEL_NAME = "llama-3.1-8b-instant"
 
 def generate_dynamic_scenario():
@@ -81,12 +113,7 @@ def generate_dynamic_scenario():
 
     return {"loc": loc, "party": party, "level": level, "imp": imp}
 
-
-def normalize_for_llm(ml_score, max_expected=0.45):
-    normalized = (ml_score / max_expected) * 10.0
-    return min(10.0, max(0.1, round(normalized, 1)))
-
-def ask_llm_auditor(scen, item, delta, max_retries=5):
+def ask_llm_auditor(scen, item, delta, max_retries=15):
     if delta == 0:
         delta_text = "NORMAL (Ideal balance for their level)"
     elif delta > 0:
@@ -162,10 +189,17 @@ Perform the analysis and output JSON."""
 
         except Exception as e:
             error_msg = str(e).lower()
-            if any(code in error_msg for code in ["429", "rate_limit", "timeout", "503", "502", "failed_generation"]):
-                wait_time = 15.0 * (attempt + 1)
-                console.print(f"[yellow]⏳ Задержка API. Ждем {wait_time} сек... (Попытка {attempt + 1})[/yellow]")
-                time.sleep(wait_time)
+            if any(code in error_msg for code in ["429", "rate_limit", "timeout", "503", "502", "failed_generation", "limit"]):
+                if auto_mode:
+                    if rotate_api_key():
+                        time.sleep(0.5)
+                        continue
+                    else:
+                        return None, "Не удалось переключить ключ API."
+                else:
+                    wait_time = 15.0 * (attempt + 1)
+                    console.print(f"[yellow]⏳ Задержка API. Ждем {wait_time} сек... (Попытка {attempt + 1})[/yellow]")
+                    time.sleep(wait_time)
             else:
                 return None, f"Ошибка API: {str(e)}"
 
@@ -219,8 +253,7 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
         p_scores = util.cos_sim(p_emb, kb_emb)[0]
 
         combined = (l_scores + p_scores) / 2.0
-        idx = torch.topk(combined, k=random.randint(1, 15)).indices[
-            -1].item() if random.random() > 0.3 else random.randint(0, len(kb) - 1)
+        idx = torch.topk(combined, k=random.randint(1, 15)).indices[-1].item() if random.random() > 0.3 else random.randint(0, len(kb) - 1)
         item = kb.iloc[idx]
 
         l_s = round(l_scores[idx].item(), 4)
@@ -242,13 +275,14 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
                 break
 
         # ==========================================
-        # НЕПРЕРЫВНЫЙ PYTHON GATEKEEPER
+        # НЕПРЕРЫВНЫЙ PYTHON GATEKEEPER И НОРМАЛИЗАЦИЯ
         # ==========================================
         penalty_multiplier = 1.0
         reason_parts = []
         force_python = False
         is_consumable = any(c in i_type for c in ['potion', 'scroll', 'arrow', 'bolt', 'dart'])
 
+        # Нормализация сырых скоров к диапазону 0.0 - 1.0
         eff_l = max(0.0, l_s - 0.12) / (0.45 - 0.12)
         eff_p = max(0.0, p_s - 0.12) / (0.45 - 0.12)
 
@@ -324,13 +358,13 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
                 time.sleep(3)
                 continue
 
-            weighted_raw = (l_s * 0.55) + (p_s * 0.45)
+            weighted_raw = (norm_l * 0.55) + (norm_p * 0.45)
             raw_target = (score * 0.75) + (weighted_raw * 0.25)
             noise = random.gauss(0, 0.015)
 
             target_y = round(max(0.150, min(0.999, raw_target + noise)), 4)
             reason = f"[AI] {llm_reason}"
-            time.sleep(1.5)
+            time.sleep(1.5) # Штатная задержка между успешными запросами
 
         row_dict = {
             'item_name': item['name'], 'location_text': scen['loc'], 'party_text': scen['party'],
