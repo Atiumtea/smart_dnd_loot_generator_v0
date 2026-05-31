@@ -58,7 +58,6 @@ def roll_final_loot(valid_items, party_level):
         ))
         return
 
-    # ВЗВЕШЕННЫЙ БРОСОК
     pool_size = len(valid_items)
     weights = [item['final_score'] for item in valid_items]
     chosen_item = random.choices(valid_items, weights=weights, k=1)[0]
@@ -242,25 +241,28 @@ class SmartLootGenerator:
             if max(l_score, p_score) < 0.15:
                 continue
 
-            rarity_val = get_rarity_val(item['rarity'], party_level)
-            delta = calculate_level_delta(rarity_val, party_level)
+            rarity_val = float(get_rarity_val(item['rarity'], party_level))
+            delta = float(calculate_level_delta(rarity_val, party_level))
 
             is_duplicate = 1.0 if str(item['name']).lower() in [inv.lower() for inv in party_inventory] else 0.0
 
             item_type_str = str(item.get('type', 'wondrous item')).lower()
             type_ohe_list = get_type_ohe(item_type_str)
 
-            synergy_flag = 0.0
-            for cls, allowed_types in CLASS_SYNERGY.items():
-                if cls in found_base_classes:
-                    if any(t in item_type_str for t in allowed_types):
-                        synergy_flag = 1.0
-                        break
+            is_consumable = 1.0 if any(
+                c in item_type_str for c in ['potion', 'scroll', 'arrow', 'bolt', 'dart']) else 0.0
 
-            continuous_features = [l_score, p_score, story_importance, delta]
-            binary_features = [is_duplicate, synergy_flag]
+            synergy_count = 0
+            for cls in found_base_classes:
+                if any(t in item_type_str for t in CLASS_SYNERGY.get(cls, [])):
+                    synergy_count += 1
+            party_size_calc = max(1, len(found_base_classes))
+            synergy_density = float(synergy_count / party_size_calc)
+
+            continuous_features = [l_score, p_score, story_importance, rarity_val, delta, synergy_density]
+            binary_features = [is_consumable, is_duplicate]
+
             feature_vector = continuous_features + binary_features + type_ohe_list
-
             features_list.append(feature_vector)
 
             item.update({
@@ -282,8 +284,6 @@ class SmartLootGenerator:
         for i, item in enumerate(candidates):
             raw_score = float(predictions[i])
             item['final_score'] = min(1.0, max(0.0, raw_score))
-        candidates.sort(key=lambda x: x['final_score'], reverse=True)
-
         candidates.sort(key=lambda x: x['final_score'], reverse=True)
 
         base_score_threshold = 0.40

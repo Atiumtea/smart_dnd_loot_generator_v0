@@ -120,10 +120,11 @@ Your task is to provide a final evaluation (Score from 0.150 to 0.990) based on 
 
 EVALUATION RULES (STRICT):
 1. READ THE "GATEKEEPER NOTES" CAREFULLY. These are mechanical checks performed by the system.
-2. If Gatekeeper Notes say "No mechanical penalties. Standard balance maintained.", evaluate the narrative OBJECTIVELY. Do not inflate the score. A score of 0.500-0.700 is perfectly fine if the item is just "okay".
-3. If Gatekeeper Notes say "Mechanically perfect. Exceptional contextual fit.", the item is statistically ideal. You are highly encouraged to award a top-tier score (0.800 - 0.990).
-4. If Gatekeeper Notes contain warnings (e.g., "Too early", "Weak context bottleneck", "Duplicate"), you MUST penalize the score heavily. 
-5. Output your analysis and the final float score in JSON format.
+2. If Gatekeeper Notes say "No mechanical penalties. Standard balance maintained.", evaluate the narrative OBJECTIVELY. Do not inflate the score. A score of 0.500-0.700 is perfectly fine.
+3. If Gatekeeper Notes say "Strong contextual match. Above average utility.", the item is highly relevant but has minor flaws. Award a score between 0.700 and 0.850.
+4. If Gatekeeper Notes say "Mechanically perfect. Exceptional contextual fit.", the item is statistically ideal. You are highly encouraged to award a top-tier score (0.850 - 0.990).
+5. If Gatekeeper Notes contain warnings (e.g., "Too early", "Weak context bottleneck", "Duplicate"), you MUST penalize the score heavily.
+6. Output your analysis and the final float score in JSON format.
 
 OUTPUT STRICTLY IN JSON FORMAT:
 {
@@ -175,7 +176,7 @@ Perform the analysis and output JSON."""
         except Exception as e:
             error_msg = str(e).lower()
 
-            # 1. НАСТОЯЩИЕ ЛИМИТЫ API
+            # 1. ЛИМИТЫ API
             if any(code in error_msg for code in ["429", "rate_limit", "limit", "too_many"]):
                 if auto_mode:
                     rotation_count += 1
@@ -241,13 +242,22 @@ else:
 console.print()
 console.print(f"[bold cyan]🚀 ГИБРИДНАЯ РАЗМЕТКА ЗАПУЩЕНА (В базе: {total_annotated})[/bold cyan]")
 
+remaining_to_goal = max(1000, 25000 - total_annotated)
+
 while True:
     try:
-        user_input = console.input("[bold yellow]Сколько примеров сгенерировать? (Например, 5000): [/bold yellow]")
+        user_input = console.input(
+            f"[bold yellow]Сколько примеров сгенерировать? (Нажмите Enter для {remaining_to_goal}): [/bold yellow]").strip()
+
+        if not user_input:
+            target_samples = remaining_to_goal
+            console.print(f"[dim]✅ Принято: {target_samples}[/dim]")
+            break
+
         target_samples = int(user_input)
         break
     except ValueError:
-        console.print("[bold red]Пожалуйста, введите корректное число.[/bold red]")
+        console.print("[bold red]❌ Пожалуйста, введите число или просто нажмите Enter.[/bold red]")
 
 success_count = 0
 with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as progress:
@@ -268,16 +278,12 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
         rand_val = random.random()
 
         if rand_val < 0.40:
-            # 40% - Топ лучших (учим тонкости идеального лута)
             idx = torch.topk(combined, k=random.randint(1, 100)).indices[-1].item()
         elif rand_val < 0.55:
-            # 15% - HARD NEGATIVE: Идеально для локации, игнорируем партию (учим штрафам за синергию)
             idx = torch.topk(l_scores, k=random.randint(1, 30)).indices[-1].item()
         elif rand_val < 0.80:
-            # 25% - Средние предметы (ищем скрытые связи)
             idx = torch.topk(combined, k=random.randint(100, min(500, len(kb)))).indices[-1].item()
         else:
-            # 20% - Полная случайность (учимся уверенно ставить низкие Y для полного мусора)
             idx = random.randint(0, len(kb) - 1)
 
         item = kb.iloc[idx]
@@ -319,17 +325,21 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
             reason_parts.append(f"Low base relevance ({base_quality:.2f})")
 
         bottleneck = min(norm_l, norm_p)
-        if bottleneck < 0.30:  # ПОДНЯЛИ ПОРОГ! Теперь N:0.22 не проскочит
+        if bottleneck < 0.30:
             bottleneck_penalty = (max(0.001, bottleneck) / 0.30) ** 1.3
             penalty_multiplier *= bottleneck_penalty
-            if bottleneck < 0.10:  # Подняли порог жесткого отсева
+            if bottleneck < 0.10:
                 force_python = True
                 reason_parts.append(f"Critical context mismatch (Min={bottleneck:.2f})")
             else:
                 reason_parts.append(f"Weak context bottleneck (Min={bottleneck:.2f})")
 
-        expected_rarity = 1.0 + scen['imp'] * 4.0
+        expected_rarity = 1.0 + scen['imp'] * 4.0 #заменить на 5
         rarity_diff = rarity_val - expected_rarity
+
+        if rarity_val >= 6.0 and scen['imp'] >= 0.85: # вырезать
+            rarity_diff = 0.0
+
         if rarity_diff > 0.5:
             severity = (rarity_diff / 1.5) ** 2
             penalty_multiplier *= 1.0 / (1.0 + severity)
@@ -360,13 +370,12 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
         # ==========================================
         is_hard_penalty = force_python or (penalty_multiplier < 0.40)
 
-        # Разделяем "просто без штрафов" и "истинный идеал"
         if not reason_parts:
-            # Если оба скора выше 0.70 — это действительно идеальный матч
-            if norm_l >= 0.70 and norm_p >= 0.70:
+            if norm_l >= 0.64 and bottleneck >= 0.44 and base_quality >= 0.58:
                 gatekeeper_log = "Mechanically perfect. Exceptional contextual fit."
+            elif base_quality >= 0.50 or (norm_l >= 0.55 and bottleneck >= 0.35):
+                gatekeeper_log = "Strong contextual match. Above average utility."
             else:
-                # Если скоры средние, даем нейтральную оценку
                 gatekeeper_log = "No mechanical penalties. Standard balance maintained."
         else:
             gatekeeper_log = " | ".join(reason_parts)
@@ -393,13 +402,10 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
 
             weighted_raw = (norm_l * 0.55) + (norm_p * 0.45)
 
-            # 1. ЖЕСТКИЙ ПОТОЛОК: итоговая оценка не может быть выше базового качества более чем на 0.25
             max_allowed_score = min(0.999, weighted_raw + 0.25)
 
-            # 2. Возвращаем оригинальную логику: подмешиваем объективную математику к оценке LLM
             raw_target = (score * 0.70) + (weighted_raw * 0.30)
 
-            # 3. Обрезаем фантазии LLM об наш потолок и добавляем шум
             capped_target = min(raw_target, max_allowed_score)
             target_y = round(max(0.150, min(0.999, capped_target + random.gauss(0, 0.015))), 4)
 

@@ -119,7 +119,7 @@ def train_and_evaluate():
     val_loader = DataLoader(val_dataset, batch_size=128, shuffle=False)
     test_loader = DataLoader(test_dataset, batch_size=128, shuffle=False)
 
-    model = DnDItemRanker(input_size=15)
+    model = DnDItemRanker(input_size=len(features))
 
     criterion = nn.SmoothL1Loss(beta=0.1)
     optimizer = optim.Adam(model.parameters(), lr=0.003)
@@ -168,7 +168,7 @@ def train_and_evaluate():
     model.load_state_dict(torch.load('dnd_hybrid_weights.pth', weights_only=True))
 
     # ==========================================
-    # 4. АНАЛИТИКА И СОХРАНЕНИЕ LUT
+    # 4. АНАЛИТИКА
     # ==========================================
     model.eval()
     with torch.no_grad():
@@ -178,10 +178,8 @@ def train_and_evaluate():
     mae = mean_absolute_error(y_test, y_pred)
     mbe_global = np.mean(y_pred - y_test)
 
-    # --- Детализированный анализ локального смещения (Шаг 0.05) ---
     y_pred_final = np.clip(y_pred, 0.0, 1.0)
 
-    # --- 2. Бизнес-метрики (Ранжирование) ---
     spearman_corr, _ = spearmanr(y_test, y_pred_final)
     k_val = min(50, len(y_test))
     if k_val > 1:
@@ -228,7 +226,7 @@ def train_and_evaluate():
 
     # 3. Распределение
     plt.figure()
-    sns.histplot(y_pred, bins=50, kde=True, color='purple', stat="density", label='Предсказания (до LUT)')
+    sns.histplot(y_pred, bins=50, kde=True, color='purple', stat="density", label='Предсказания')
     sns.histplot(y_test, bins=50, kde=True, color='orange', stat="density", alpha=0.4, label='Реальность')
     plt.title('Распределение предсказаний на Test Set', fontsize=14, fontweight='bold')
     plt.xlabel('Скор (Relevance)')
