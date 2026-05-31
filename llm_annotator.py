@@ -118,23 +118,24 @@ def generate_dynamic_scenario():
     return {"loc": loc, "party": party, "level": level, "imp": imp}
 
 
-def ask_llm_auditor(scen, item, reason_parts, synergy_count, party_size, max_retries=15):
-    notes_str = ", ".join(reason_parts) if reason_parts else "None. Mechanically perfect."
+def ask_llm_auditor(scen, item, gatekeeper_log, synergy_count, party_size, max_retries=15):
+
 
     system_prompt = """You are a Data Auditor and an experienced Dungeon Master for D&D 5e.
 Your task is to provide a final evaluation (Score from 0.150 to 0.990) based on NARRATIVE APPROPRIATENESS, ROLEPLAY UTILITY, and GATEKEEPER NOTES.
 
 EVALUATION RULES (STRICT):
 1. READ THE "GATEKEEPER NOTES" CAREFULLY. These are mechanical checks performed by the system.
-2. If Gatekeeper Notes indicate "None. Mechanically perfect.", you are free to award a high score (0.800 - 0.990) if the narrative fit is excellent.
-3. If Gatekeeper Notes contain warnings (e.g., "Too early", "Zero class synergy", "Duplicate"), you MUST penalize the score. An item with zero synergy or serious level imbalance should NOT score above 0.500, regardless of how cool it is narratively.
-4. Output your analysis and the final float score in JSON format.
+2. If Gatekeeper Notes say "No mechanical penalties. Standard balance maintained.", evaluate the narrative OBJECTIVELY. Do not inflate the score. A score of 0.500-0.700 is perfectly fine if the item is just "okay".
+3. If Gatekeeper Notes say "Mechanically perfect. Exceptional contextual fit.", the item is statistically ideal. You are highly encouraged to award a top-tier score (0.800 - 0.990).
+4. If Gatekeeper Notes contain warnings (e.g., "Too early", "Weak context bottleneck", "Duplicate"), you MUST penalize the score heavily. 
+5. Output your analysis and the final float score in JSON format.
 
 OUTPUT STRICTLY IN JSON FORMAT:
 {
   "loc_analysis": "Brief analysis of how the item fits the location",
   "party_analysis": "Brief analysis of how the item fits the party classes",
-  "gatekeeper_integration": "Acknowledge the Gatekeeper Notes and state how much you penalized the item because of them",
+  "gatekeeper_integration": "Acknowledge the Gatekeeper Notes and state how they impacted your score",
   "score": <float_number_from_0.150_to_0.990>
 }"""
 
@@ -143,9 +144,11 @@ OUTPUT STRICTLY IN JSON FORMAT:
 - Location: {scen['loc']}
 - Party Composition (Level {scen['level']}): {scen['party']}
 - Class Synergy: {synergy_count} out of {party_size} party members can optimally use this item.
-- Gatekeeper Notes (Mechanical Penalties): {notes_str}
+- Gatekeeper Notes (Mechanical Penalties): {gatekeeper_log}
 
 Perform the analysis and output JSON."""
+
+    rotation_count = 0
 
     for attempt in range(max_retries):
         try:
@@ -168,7 +171,6 @@ Perform the analysis and output JSON."""
 
             score = float(result.get("score", 0.3))
 
-            # Убрана обрезка символов ([:35]), текст выводится полностью
             llm_reason = (
                 f"Loc: {result.get('loc_analysis', '')} | "
                 f"Party: {result.get('party_analysis', '')} | "
@@ -178,20 +180,42 @@ Perform the analysis and output JSON."""
 
         except Exception as e:
             error_msg = str(e).lower()
-            if any(code in error_msg for code in
-                   ["429", "rate_limit", "timeout", "503", "502", "failed_generation", "limit"]):
+
+            # 1. НАСТОЯЩИЕ ЛИМИТЫ API
+            if any(code in error_msg for code in ["429", "rate_limit", "limit", "too_many"]):
                 if auto_mode:
-                    if rotate_api_key():
-                        time.sleep(0.5)
-                        continue
+                    rotation_count += 1
+                    if rotation_count >= 7:
+                        # ЕСЛИ ПРОШЛИ 7 КЛЮЧЕЙ И ВСЕ В ЛИМИТЕ — ПОЛНОСТЬЮ ОСТАНАВЛИВАЕМ СКРИПТ!
+                        console.print("\n[bold red]🚨 ВСЕ 7 КЛЮЧЕЙ ИСЧЕРПАЛИ ЛИМИТЫ![/bold red]")
+                        console.print(
+                            "[bold red]🛑 Генератор остановлен на 30 минут, чтобы не испортить баланс выборки...[/bold red]\n")
+                        time.sleep(1800)  # Спим полчаса
+                        rotation_count = 0  # Сбрасываем счетчик после сна
+                        continue  # Пытаемся отправить ТОТ ЖЕ предмет снова!
                     else:
-                        return None, "API Key rotation failed."
+                        rotate_api_key()
+                        time.sleep(1)
+                        continue
                 else:
                     wait_time = 15.0 * (attempt + 1)
-                    console.print(f"[yellow]⏳ API Delay. Waiting {wait_time} sec... (Attempt {attempt + 1})[/yellow]")
+                    console.print(f"[yellow]⏳ Лимит ключа. Ждем {wait_time} сек...[/yellow]")
                     time.sleep(wait_time)
+                    continue
+
+            # 2. ПРОБЛЕМЫ С СЕТЬЮ / СЕРВЕРОМ GROQ (НЕ МЕНЯЕМ КЛЮЧ, просто ждем восстановления связи)
+            elif any(code in error_msg for code in
+                     ["timeout", "503", "502", "500", "connection", "connect", "network", "peer"]):
+                console.print(f"[yellow]⏳ Сбой сети/сервера Groq. Ждем 15 сек... (Попытка {attempt + 1})[/yellow]")
+                time.sleep(15)
+                continue
+
+            # 3. НЕИЗВЕСТНЫЕ ОШИБКИ
             else:
-                return None, f"API Error: {str(e)}"
+                console.print(
+                    f"[yellow]⚠️ Неизвестная ошибка: {error_msg}. Ждем 10 сек... (Попытка {attempt + 1})[/yellow]")
+                time.sleep(10)
+                continue
 
     return None, "Timeout limit exceeded."
 
@@ -294,9 +318,10 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
         reason_parts = []
         force_python = False
 
-        # === ИЗМЕНЕНИЕ 2: ПЛАВНАЯ НОРМАЛИЗАЦИЯ (чтобы не терять разницу на верхах) ===
-        norm_l = min(1.0, max(0.0, (l_s / 0.45) ** 0.8))
-        norm_p = min(1.0, max(0.0, (p_s / 0.45) ** 0.8))
+        safe_l_s = max(0.0, l_s)
+        norm_l = min(1.0, (safe_l_s / 0.45) ** 0.8)
+        safe_p_s = max(0.0, p_s)
+        norm_p = min(1.0, (safe_p_s / 0.45) ** 0.8)
         base_quality = (norm_l + norm_p) / 2.0
 
         if base_quality < 0.35:
@@ -304,10 +329,10 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
             reason_parts.append(f"Low base relevance ({base_quality:.2f})")
 
         bottleneck = min(norm_l, norm_p)
-        if bottleneck < 0.18:
-            bottleneck_penalty = (max(0.001, bottleneck) / 0.18) ** 1.5
+        if bottleneck < 0.30:  # ПОДНЯЛИ ПОРОГ! Теперь N:0.22 не проскочит
+            bottleneck_penalty = (max(0.001, bottleneck) / 0.30) ** 1.3
             penalty_multiplier *= bottleneck_penalty
-            if bottleneck < 0.05:
+            if bottleneck < 0.10:  # Подняли порог жесткого отсева
                 force_python = True
                 reason_parts.append(f"Critical context mismatch (Min={bottleneck:.2f})")
             else:
@@ -338,32 +363,56 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
 
         if is_dup == 1.0 and is_consumable == 0.0:
             penalty_multiplier *= 0.65
-            reason_parts.append("Duplicate equipment")
+            reason_parts.append("Duplicate non-consumable equipment (Loot bloat - apply penalty)")
 
         # ==========================================
         # МАРШРУТИЗАЦИЯ И БАЛАНСИРОВКА
         # ==========================================
         is_hard_penalty = force_python or (penalty_multiplier < 0.40)
-        gatekeeper_log = " | ".join(reason_parts) if reason_parts else "None. Mechanically perfect."
+
+        # Разделяем "просто без штрафов" и "истинный идеал"
+        if not reason_parts:
+            # Если оба скора выше 0.70 — это действительно идеальный матч
+            if norm_l >= 0.70 and norm_p >= 0.70:
+                gatekeeper_log = "Mechanically perfect. Exceptional contextual fit."
+            else:
+                # Если скоры средние, даем нейтральную оценку
+                gatekeeper_log = "No mechanical penalties. Standard balance maintained."
+        else:
+            gatekeeper_log = " | ".join(reason_parts)
 
         if is_hard_penalty:
-            if random.random() > 0.75:
+            if random.random() > 0.66:
                 continue
 
             hard_score = base_quality * penalty_multiplier + random.gauss(0, 0.005)
             target_y = round(max(0.001, min(0.999, hard_score)), 4)
             final_output_text = f"[magenta][Gatekeeper]: {gatekeeper_log}[/magenta]"
         else:
-            score, llm_reason = ask_llm_auditor(scen, item, reason_parts, synergy_count, party_size)
+            score, llm_reason = ask_llm_auditor(scen, item, gatekeeper_log, synergy_count, party_size, is_dup)
 
             if score is None:
                 progress.console.print(f"[red]⚠️ Пропуск: {llm_reason}[/red]")
-                time.sleep(3)
+                if "rotation failed" in llm_reason:
+                    progress.console.print(
+                        "[bold red]🚨 Все ключи мертвы. Спим 30 минут до сброса лимитов...[/bold red]")
+                    time.sleep(1800)
+                else:
+                    time.sleep(3)
                 continue
 
             weighted_raw = (norm_l * 0.55) + (norm_p * 0.45)
-            raw_target = (score * 0.75) + (weighted_raw * 0.25)
-            target_y = round(max(0.150, min(0.999, raw_target + random.gauss(0, 0.015))), 4)
+
+            # 1. ЖЕСТКИЙ ПОТОЛОК: итоговая оценка не может быть выше базового качества более чем на 0.25
+            max_allowed_score = min(0.999, weighted_raw + 0.25)
+
+            # 2. Возвращаем оригинальную логику: подмешиваем объективную математику к оценке LLM
+            raw_target = (score * 0.70) + (weighted_raw * 0.30)
+
+            # 3. Обрезаем фантазии LLM об наш потолок и добавляем шум
+            capped_target = min(raw_target, max_allowed_score)
+            target_y = round(max(0.150, min(0.999, capped_target + random.gauss(0, 0.015))), 4)
+
             final_output_text = f"[magenta][Gatekeeper]: {gatekeeper_log}[/magenta]\n[green][LLM]: {llm_reason}[/green]"
             time.sleep(1.5)
 
@@ -381,7 +430,8 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
         progress.console.print(
             f"[dim]Лут:[/dim] [cyan]{item['name'][:25]:<25}[/cyan] | "
             f"[bold white]Y: {target_y:.4f}[/bold white] | "
-            f"[dim]L: {l_s:.3f} (N:{norm_l:.2f}) | P: {p_s:.3f} (N:{norm_p:.2f}) | D: {delta} | Syn: {syn_density:.2f}[/dim]\n"
+            f"[dim]L: {l_s:.3f} (N:{norm_l:.2f}) | P: {p_s:.3f} (N:{norm_p:.2f}) | "
+            f"D: {delta} | Syn: {syn_density:.2f} | Dup: {int(is_dup)}[/dim] | Imp: {scen['imp']:.2f}\n"
             f"{final_output_text}\n"
         )
 
