@@ -251,7 +251,21 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
         p_scores = util.cos_sim(p_emb, kb_emb)[0]
 
         combined = (l_scores + p_scores) / 2.0
-        idx = torch.topk(combined, k=random.randint(1, 50)).indices[-1].item()
+        rand_val = random.random()
+
+        if rand_val < 0.40:
+            # 40% - Топ лучших (учим тонкости идеального лута)
+            idx = torch.topk(combined, k=random.randint(1, 100)).indices[-1].item()
+        elif rand_val < 0.55:
+            # 15% - HARD NEGATIVE: Идеально для локации, игнорируем партию (учим штрафам за синергию)
+            idx = torch.topk(l_scores, k=random.randint(1, 30)).indices[-1].item()
+        elif rand_val < 0.80:
+            # 25% - Средние предметы (ищем скрытые связи)
+            idx = torch.topk(combined, k=random.randint(100, min(500, len(kb)))).indices[-1].item()
+        else:
+            # 20% - Полная случайность (учимся уверенно ставить низкие Y для полного мусора)
+            idx = random.randint(0, len(kb) - 1)
+
         item = kb.iloc[idx]
 
         l_s = round(l_scores[idx].item(), 4)
@@ -280,17 +294,15 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
         reason_parts = []
         force_python = False
 
-        # Нормализация
-        norm_l = min(1.0, max(0.0, l_s / 0.45))
-        norm_p = min(1.0, max(0.0, p_s / 0.45))
+        # === ИЗМЕНЕНИЕ 2: ПЛАВНАЯ НОРМАЛИЗАЦИЯ (чтобы не терять разницу на верхах) ===
+        norm_l = min(1.0, max(0.0, (l_s / 0.45) ** 0.8))
+        norm_p = min(1.0, max(0.0, (p_s / 0.45) ** 0.8))
         base_quality = (norm_l + norm_p) / 2.0
 
-        # 1. ПЛАВНЫЙ БАЗОВЫЙ ФИЛЬТР
         if base_quality < 0.35:
             penalty_multiplier *= (max(0.01, base_quality) / 0.35) ** 2
             reason_parts.append(f"Low base relevance ({base_quality:.2f})")
 
-        # 2. ПЛАВНЫЙ ШТРАФ УЗКОГО ГОРЛЫШКА (Bottleneck Penalty)
         bottleneck = min(norm_l, norm_p)
         if bottleneck < 0.18:
             bottleneck_penalty = (max(0.001, bottleneck) / 0.18) ** 1.5
@@ -301,7 +313,6 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
             else:
                 reason_parts.append(f"Weak context bottleneck (Min={bottleneck:.2f})")
 
-        # 3. СЮЖЕТНЫЕ ОГРАНИЧЕНИЯ (Ожидаемая редкость)
         expected_rarity = 1.0 + scen['imp'] * 4.0
         rarity_diff = rarity_val - expected_rarity
         if rarity_diff > 0.5:
@@ -309,10 +320,7 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
             penalty_multiplier *= 1.0 / (1.0 + severity)
             reason_parts.append(f"Too rare (Item: {rarity_val}, Expected: {expected_rarity:.1f})")
 
-        # 4. БАЛАНС УРОВНЕЙ (Строгий контроль превышения)
         if delta > 0:
-            # Новая формула: агрессивна к превышению даже на 1 уровень,
-            # но прощает, если сюжетная важность (imp) стремится к 1.0
             severity = (delta ** 1.5) * max(0.05, 0.85 - scen['imp']) * 4.0
             penalty_multiplier *= 1.0 / (1.0 + severity)
             reason_parts.append(f"Too early by {delta} levels")
@@ -321,7 +329,6 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
             penalty_multiplier *= 1.0 / (1.0 + severity)
             reason_parts.append(f"Too late by {abs(delta)} levels")
 
-        # 5. СИНЕРГИЯ И ДУБЛИКАТЫ
         if syn_density == 0.0:
             penalty_multiplier *= 0.65
             reason_parts.append("Zero class synergy")
@@ -340,8 +347,7 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
         gatekeeper_log = " | ".join(reason_parts) if reason_parts else "None. Mechanically perfect."
 
         if is_hard_penalty:
-            # Undersampling: пропускаем 80% мусора
-            if random.random() > 0.20:
+            if random.random() > 0.75:
                 continue
 
             hard_score = base_quality * penalty_multiplier + random.gauss(0, 0.005)

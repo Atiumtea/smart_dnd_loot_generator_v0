@@ -4,7 +4,7 @@ import torch
 import json
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_squared_error, mean_absolute_error, ndcg_score
@@ -107,12 +107,21 @@ def train_and_evaluate():
     val_dataset = DnDDataset(X_val_scaled, y_val)
     test_dataset = DnDDataset(X_test_scaled, y_test)
 
-    train_loader = DataLoader(train_dataset, batch_size=128, shuffle=True)
+    bins = np.digitize(y_train, bins=[0.33, 0.66])
+    class_counts = np.array([len(np.where(bins == t)[0]) for t in np.unique(bins)])
+    class_counts = np.maximum(class_counts, 1)  # Защита от деления на 0
+    weight_dict = {t: 1.0 / count for t, count in zip(np.unique(bins), class_counts)}
+    samples_weight = np.array([weight_dict[t] for t in bins])
+
+    sampler = WeightedRandomSampler(weights=samples_weight, num_samples=len(samples_weight), replacement=True)
+
+    train_loader = DataLoader(train_dataset, batch_size=128, sampler=sampler)
     val_loader = DataLoader(val_dataset, batch_size=128, shuffle=False)
     test_loader = DataLoader(test_dataset, batch_size=128, shuffle=False)
 
     model = DnDItemRanker(input_size=15)
-    criterion = nn.MSELoss()
+
+    criterion = nn.SmoothL1Loss(beta=0.1)
     optimizer = optim.Adam(model.parameters(), lr=0.003)
 
     epochs = 40
@@ -170,42 +179,14 @@ def train_and_evaluate():
     mbe_global = np.mean(y_pred - y_test)
 
     # --- Детализированный анализ локального смещения (Шаг 0.05) ---
-    df_analysis = pd.DataFrame({
-        'y_true': y_test,
-        'y_pred': y_pred,
-        'residual': y_pred - y_test
-    })
-
-    bins = np.arange(0.0, 1.05, 0.05)
-    df_analysis['score_bucket'] = pd.cut(df_analysis['y_pred'], bins=bins, include_lowest=True)
-    bias_by_bucket = df_analysis.groupby('score_bucket', observed=False)['residual'].mean()
-    bias_by_bucket = bias_by_bucket.ffill().bfill()
-
-    print("\n" + "=" * 50)
-    print(" 🔍 ЛОКАЛЬНОЕ СМЕЩЕНИЕ (BIAS ПО СЕГМЕНТАМ 0.05) ")
-    print("=" * 50)
-    for bucket, local_mbe in bias_by_bucket.items():
-        print(f"Диапазон {bucket}: MBE = {local_mbe:+.4f}")
-
-    calibration_lut = [-float(mbe) for mbe in bias_by_bucket.values]
-    with open('calibration_lut.json', 'w') as f:
-        json.dump(calibration_lut, f)
-    print(f"\n✅ Таблица калибровки (LUT) успешно сохранена в 'calibration_lut.json' ({len(calibration_lut)} бакетов).")
-
-    def apply_calibration(val):
-        idx = int(val / 0.05)
-        idx = min(max(0, idx), len(calibration_lut) - 1)
-        return val + calibration_lut[idx]
-
-    y_pred_calibrated = np.array([apply_calibration(v) for v in y_pred])
-    y_pred_calibrated = np.clip(y_pred_calibrated, 0.0, 1.0)
+    y_pred_final = np.clip(y_pred, 0.0, 1.0)
 
     # --- 2. Бизнес-метрики (Ранжирование) ---
-    spearman_corr, _ = spearmanr(y_test, y_pred)
+    spearman_corr, _ = spearmanr(y_test, y_pred_final)
     k_val = min(50, len(y_test))
     if k_val > 1:
-        ndcg_k = ndcg_score(y_test.reshape(1, -1), y_pred.reshape(1, -1), k=k_val)
-        top_k_indices = np.argsort(y_pred)[::-1][:k_val]
+        ndcg_k = ndcg_score(y_test.reshape(1, -1), y_pred_final.reshape(1, -1), k=k_val)
+        top_k_indices = np.argsort(y_pred_final)[::-1][:k_val]
         real_scores_in_top = y_test[top_k_indices]
         precision_k = np.sum(real_scores_in_top >= 0.70) / k_val
     else:
@@ -266,27 +247,6 @@ def train_and_evaluate():
     plt.ylabel('Плотность (Density)')
     plt.legend()
     plt.savefig('model_report_plots/4_residuals_bias.png', dpi=300)
-    plt.close()
-
-    # 5. НОВЫЙ: Сравнение предсказаний ДО и ПОСЛЕ калибровки (Side-by-Side)
-    fig, axes = plt.subplots(1, 2, figsize=(14, 6), sharey=True)
-
-    # Левый график (ДО)
-    axes[0].scatter(y_test, y_pred, alpha=0.4, color='green', s=15)
-    axes[0].plot([0, 1], [0, 1], color='red', linestyle='--', linewidth=2)
-    axes[0].set_title('ДО калибровки (Сырые предсказания)', fontsize=12, fontweight='bold')
-    axes[0].set_xlabel('Реальный Target Y')
-    axes[0].set_ylabel('Предсказание Модели')
-
-    # Правый график (ПОСЛЕ)
-    axes[1].scatter(y_test, y_pred_calibrated, alpha=0.4, color='blue', s=15)
-    axes[1].plot([0, 1], [0, 1], color='red', linestyle='--', linewidth=2)
-    axes[1].set_title('ПОСЛЕ LUT-калибровки', fontsize=12, fontweight='bold')
-    axes[1].set_xlabel('Реальный Target Y')
-
-    plt.suptitle('Эффект применения табличной калибровки (LUT) на тестовой выборке', fontsize=16, fontweight='bold')
-    plt.tight_layout()
-    plt.savefig('model_report_plots/5_calibration_effect.png', dpi=300)
     plt.close()
 
     print("✅ Графики аналитики сохранены в папку 'model_report_plots'.")
