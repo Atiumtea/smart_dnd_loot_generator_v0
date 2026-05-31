@@ -19,7 +19,7 @@ load_dotenv()
 
 from models import (
     ITEM_TYPES, CLASS_SYNERGY, get_type_ohe, CLASS_LORE, PLANES, TERRAIN, ATMOSPHERE,
-    ENEMY_FACTIONS, ENEMY_ACTIONS, build_party_semantics, get_tier_brackets, get_rarity_val, calculate_level_delta
+    ENEMY_FACTIONS, ENEMY_ACTIONS, build_party_semantics, get_rarity_val, calculate_level_delta
 )
 
 os.environ['TRANSFORMERS_VERBOSITY'] = 'error'
