@@ -1,7 +1,6 @@
 import pandas as pd
 import numpy as np
 import torch
-import json
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
@@ -52,7 +51,6 @@ def load_training_data():
         if len(df) < 50:
             print("⚠️ В датасете мало данных! Рекомендуется сгенерировать больше через llm_annotator.py")
 
-        df = df.fillna(0.0)
         print(f"✨ Найдено {len(df)} эталонных оценок.")
         return df
 
@@ -107,9 +105,10 @@ def train_and_evaluate():
     val_dataset = DnDDataset(X_val_scaled, y_val)
     test_dataset = DnDDataset(X_test_scaled, y_test)
 
+    # Балансировка выборки с помощью весов
     bins = np.digitize(y_train, bins=[0.33, 0.66])
     class_counts = np.array([len(np.where(bins == t)[0]) for t in np.unique(bins)])
-    class_counts = np.maximum(class_counts, 1)  # Защита от деления на 0
+    class_counts = np.maximum(class_counts, 1)
     weight_dict = {t: 1.0 / count for t, count in zip(np.unique(bins), class_counts)}
     samples_weight = np.array([weight_dict[t] for t in bins])
 
@@ -163,7 +162,7 @@ def train_and_evaluate():
 
         if (epoch + 1) % 5 == 0 or is_best:
             print(
-                f"Эпоха [{epoch + 1}/{epochs}] | Train MSE: {epoch_train_loss:.4f} | Val MSE: {epoch_val_loss:.4f} {is_best}")
+                f"Эпоха [{epoch + 1}/{epochs}] | Train Loss: {epoch_train_loss:.4f} | Val Loss: {epoch_val_loss:.4f} {is_best}")
 
     model.load_state_dict(torch.load('dnd_hybrid_weights.pth', weights_only=True))
 
@@ -174,6 +173,7 @@ def train_and_evaluate():
     with torch.no_grad():
         y_pred = model(torch.tensor(X_test_scaled, dtype=torch.float32)).numpy().flatten()
 
+    # Итоговые метрики (тут MSE/MAE уместны как метрики оценки качества, а не как Loss)
     mse = mean_squared_error(y_test, y_pred)
     mae = mean_absolute_error(y_test, y_pred)
     mbe_global = np.mean(y_pred - y_test)
@@ -193,7 +193,7 @@ def train_and_evaluate():
     print("\n" + "=" * 50)
     print(" 📊 МЕТРИКИ ДЛЯ ОТЧЕТА (TEST SET) ")
     print("=" * 50)
-    print("--- Технические метрики ---")
+    print("--- Технические метрики оценки ---")
     print(f"MSE: {mse:.4f} | MAE: {mae:.4f} | MBE (Global Bias): {mbe_global:.4f}")
     print("\n--- Бизнес-метрики (Ранжирование) ---")
     print(f"Spearman Corr: {spearman_corr:.4f} (ближе к 1.0 = идеальная сортировка)")
@@ -203,18 +203,18 @@ def train_and_evaluate():
 
     os.makedirs("model_report_plots", exist_ok=True)
 
-    # 1. Кривая обучения
+    # 1. Кривая обучения (Smooth L1 Loss)
     plt.figure()
-    plt.plot(range(1, epochs + 1), train_losses, label='Train Loss (MSE)', color='blue')
-    plt.plot(range(1, epochs + 1), val_losses, label='Validation Loss (MSE)', color='orange', linestyle='--')
+    plt.plot(range(1, epochs + 1), train_losses, label='Train Loss (Smooth L1)', color='blue')
+    plt.plot(range(1, epochs + 1), val_losses, label='Validation Loss (Smooth L1)', color='orange', linestyle='--')
     plt.title('Кривая обучения (Train vs Validation)', fontsize=14, fontweight='bold')
     plt.xlabel('Эпохи')
-    plt.ylabel('Loss (MSE)')
+    plt.ylabel('Loss (Smooth L1)')
     plt.legend()
     plt.savefig('model_report_plots/1_learning_curve.png', dpi=300)
     plt.close()
 
-    # 2. Предсказания vs Реальность (Сырые)
+    # 2. Предсказания vs Реальность
     plt.figure()
     plt.scatter(y_test, y_pred, alpha=0.5, color='green', s=15)
     plt.plot([0, 1], [0, 1], color='red', linestyle='--', linewidth=2)
@@ -234,7 +234,7 @@ def train_and_evaluate():
     plt.savefig('model_report_plots/3_distribution.png', dpi=300)
     plt.close()
 
-    # 4. График остатков и Байоса (Residuals & Bias)
+    # 4. График остатков и Смещения (Bias)
     residuals = y_pred - y_test
     plt.figure()
     sns.histplot(residuals, bins=50, kde=True, color='teal', stat="density")

@@ -12,12 +12,9 @@ from rich import box
 from rich.rule import Rule
 
 import torch
-import torch.nn as nn
-import pandas as pd
 import numpy as np
 import pickle
 import random
-import json
 import chromadb
 import chromadb.errors
 from sentence_transformers import SentenceTransformer, util
@@ -25,7 +22,7 @@ from sentence_transformers import SentenceTransformer, util
 from models import (
     DnDItemRanker, CLASS_SYNERGY, get_type_ohe, PLANES, TERRAIN, ATMOSPHERE,
     ENEMY_FACTIONS, ENEMY_ACTIONS, build_party_semantics, CLASS_LORE,
-    get_tier_brackets, get_rarity_val, calculate_level_delta
+    get_rarity_val, calculate_level_delta
 )
 
 os.environ['TRANSFORMERS_VERBOSITY'] = 'error'
@@ -35,6 +32,7 @@ logging.getLogger("sentence_transformers").setLevel(logging.ERROR)
 warnings.filterwarnings("ignore")
 
 console = Console()
+
 
 def roll_final_loot(valid_items, party_level):
     console.print("\n[bold cyan]🎲 Бросаем виртуальные кубики...[/bold cyan]")
@@ -88,7 +86,7 @@ def roll_final_loot(valid_items, party_level):
         f"[bold cyan]Delta (Разница уровней):[/bold cyan] {delta}\n"
         f"[bold cyan]Синергия с классами:[/bold cyan] {'Есть' if synergy > 0 else 'Нет'}\n"
         f"[bold cyan]Комментарий:[/bold cyan] [italic green]{reason}[/italic green]\n"
-        f"[dim]{'─' * 65}[/dim]\n" 
+        f"[dim]{'─' * 65}[/dim]\n"
         f"[bold white]Описание:[/bold white]\n{desc}"
     )
 
@@ -99,6 +97,7 @@ def roll_final_loot(valid_items, party_level):
         padding=(1, 2),
         expand=True
     ))
+
 
 class SmartLootGenerator:
     def __init__(self):
@@ -182,7 +181,10 @@ class SmartLootGenerator:
             except ValueError:
                 console.print("[red]❌ Некорректный формат. Используйте числа через запятую.[/red]")
 
-    def generate_loot(self, location_text, party_text, party_level, story_importance, party_inventory=[]):
+    def generate_loot(self, location_text, party_text, party_level, story_importance, party_inventory=None):
+        if party_inventory is None:
+            party_inventory = []
+
         if not self.active_sources:
             return []
 
@@ -312,7 +314,7 @@ class SmartLootGenerator:
         table.add_column("Синергия", justify="center", style="blue")
         table.add_column("Флаги (Расх | Дубл)", justify="center", style="red")
         table.add_column("OHE-вектор (9 типов)", justify="center", style="dim")
-        table.add_column("NN Score", justify="right", style="bold white")
+        table.add_column("ML Score", justify="right", style="bold white")
         table.add_column("Статус", justify="center")
 
         for i in range(min(5, len(candidates))):
@@ -320,10 +322,7 @@ class SmartLootGenerator:
             status = "[bold green]✅ В ПУЛЕ[/bold green]" if c[
                                                                 'final_score'] >= base_score_threshold else "[bold red]❌ ОТКЛОНЕН[/bold red]"
 
-            # Форматирование OHE-вектора для компактности (вывод целых чисел без пробелов)
             ohe_str = f"[{','.join(map(lambda x: str(int(x)), c['type_ohe_vector']))}]"
-
-            # Сокращение длинных имен для красоты таблицы
             name_short = c['name'][:20] + "..." if len(c['name']) > 20 else c['name']
 
             table.add_row(
@@ -342,6 +341,7 @@ class SmartLootGenerator:
         console.print(table)
 
         return valid_candidates
+
 
 def run_generator():
     os.system('cls' if os.name == 'nt' else 'clear')
@@ -412,6 +412,7 @@ def run_generator():
 
         roll_final_loot(pool, party_level)
 
+
 def main_menu():
     while True:
         os.system('cls' if os.name == 'nt' else 'clear')
@@ -425,7 +426,7 @@ def main_menu():
         table.add_row("1", "Data Pipeline (parser.py)", "Сбор данных по API, векторизация и обновление ChromaDB")
         table.add_row("2", "Data Annotation (llm_annotator.py)", "Генерация датасета через Gatekeeper эвристики и LLM")
         table.add_row("3", "Model Training (train_hybrid_evaluate.py)",
-                      "Обучение нейросети, расчет метрик и обновление LUT-калибровки")
+                      "Обучение нейросети, расчет метрик и сохранение весов модели")
         table.add_row("4", "Loot Generator (Inference)", "Запуск финального боевого генератора наград")
         table.add_row("q", "Выход", "Закрыть пульт управления")
 
@@ -458,6 +459,7 @@ def main_menu():
         else:
             console.print("[red]❌ Неизвестная команда. Выберите пункт от 1 до 4 или 'q' для выхода.[/red]")
             time.sleep(1.5)
+
 
 if __name__ == "__main__":
     main_menu()
