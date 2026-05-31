@@ -261,7 +261,7 @@ while True:
 
 success_count = 0
 with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as progress:
-    task = progress.add_task("[yellow]Генерация датасета...", total=target_samples)
+    task = progress.add_task(f"[yellow]Генерация датасета (Ключ {current_key_idx})...", total=target_samples)
 
     while success_count < target_samples:
         scen = generate_dynamic_scenario()
@@ -432,6 +432,6 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
         )
 
         success_count += 1
-        progress.update(task, advance=1)
+        progress.update(task, advance=1, description=f"[yellow]Генерация датасета (Ключ {current_key_idx})...")
 
 console.print("\n[bold green]✅ Сессия разметки завершена![/bold green]")
