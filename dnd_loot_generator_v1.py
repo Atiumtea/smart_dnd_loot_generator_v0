@@ -266,8 +266,16 @@ class SmartLootGenerator:
             features_list.append(feature_vector)
 
             item.update({
-                'loc_score': l_score, 'party_score': p_score,
-                'delta': delta, 'synergy': synergy_flag
+                'loc_score': l_score,
+                'party_score': p_score,
+                'delta': delta,
+                'synergy': synergy_density,
+                'synergy_density': synergy_density,
+                'importance': story_importance,
+                'rarity_val': rarity_val,
+                'is_consumable': is_consumable,
+                'is_duplicate': is_duplicate,
+                'type_ohe_vector': type_ohe_list
             })
             candidates.append(item)
 
@@ -284,6 +292,7 @@ class SmartLootGenerator:
         for i, item in enumerate(candidates):
             raw_score = float(predictions[i])
             item['final_score'] = min(1.0, max(0.0, raw_score))
+
         candidates.sort(key=lambda x: x['final_score'], reverse=True)
 
         base_score_threshold = 0.40
@@ -294,21 +303,41 @@ class SmartLootGenerator:
             valid_candidates = [c for c in candidates if c['final_score'] >= base_score_threshold]
 
         console.print()
-        table = Table(title="[dim]🛠️ DEBUG: ТОП-3 ПРЕДМЕТА ГЛАЗАМИ модели[/dim]", box=box.SIMPLE)
+        table = Table(title="[dim]🛠️ DEBUG: ТОП-5 ПРЕДМЕТОВ ГЛАЗАМИ МОДЕЛИ[/dim]", box=box.SIMPLE)
         table.add_column("Название", style="cyan")
-        table.add_column("Редкость", style="magenta")
-        table.add_column("Источник", style="yellow")
-        table.add_column("Скор (L | P | D)", justify="right", style="white")
+        table.add_column("Сходство (L | P)", justify="center", style="green")
+        table.add_column("Дельта Ур.", justify="center", style="yellow")
+        table.add_column("Редкость", justify="center", style="magenta")
+        table.add_column("Важность", justify="center", style="magenta")
+        table.add_column("Синергия", justify="center", style="blue")
+        table.add_column("Флаги (Расх | Дубл)", justify="center", style="red")
+        table.add_column("OHE-вектор (9 типов)", justify="center", style="dim")
+        table.add_column("NN Score", justify="right", style="bold white")
         table.add_column("Статус", justify="center")
 
-        for i in range(min(3, len(candidates))):
+        for i in range(min(5, len(candidates))):
             c = candidates[i]
             status = "[bold green]✅ В ПУЛЕ[/bold green]" if c[
                                                                 'final_score'] >= base_score_threshold else "[bold red]❌ ОТКЛОНЕН[/bold red]"
-            score_str = f"{c['final_score']:.3f} ([dim]{c['loc_score']:.2f} | {c['party_score']:.2f} | {c['delta']}[/dim])"
 
-            source_short = c['source'][:15] + "..." if len(c['source']) > 15 else c['source']
-            table.add_row(c['name'], c['rarity'].title(), source_short, score_str, status)
+            # Форматирование OHE-вектора для компактности (вывод целых чисел без пробелов)
+            ohe_str = f"[{','.join(map(lambda x: str(int(x)), c['type_ohe_vector']))}]"
+
+            # Сокращение длинных имен для красоты таблицы
+            name_short = c['name'][:20] + "..." if len(c['name']) > 20 else c['name']
+
+            table.add_row(
+                name_short,
+                f"{c['loc_score']:.2f} | {c['party_score']:.2f}",
+                f"{int(c['delta']):+d}",
+                f"{c['rarity_val']:.1f}",
+                f"{c['importance']:.2f}",
+                f"{c['synergy_density']:.2f}",
+                f"{int(c['is_consumable'])} | {int(c['is_duplicate'])}",
+                ohe_str,
+                f"{c['final_score']:.4f}",
+                status
+            )
 
         console.print(table)
 
