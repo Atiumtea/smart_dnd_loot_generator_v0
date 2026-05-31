@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 import json
 import random
@@ -32,17 +33,16 @@ console = Console()
 # --- ВЫБОР API КЛЮЧА И НАСТРОЙКА АВТОПЕРЕКЛЮЧЕНИЯ ---
 console.print()
 console.print("[bold yellow]Доступные ключи API:[/bold yellow]")
-for i in range(1, 8):
+for i in range(1, 11):
     console.print(f"{i}: GROQ_API_KEY_{i}")
 console.print()
 
-console.print("[bold green]Выберите ключ (введите 1-7) или напишите 'auto' для автопереключения:[/bold green]", end=" ")
+console.print("[bold green]Выберите ключ (введите 1-10) или напишите 'auto' для автопереключения:[/bold green]", end=" ")
 key_choice = console.input("").strip().lower()
 
 auto_mode = False
 current_key_idx = 1
 client = None
-
 
 def init_client(key_num):
     env_key_name = f"GROQ_API_KEY_{key_num}"
@@ -51,7 +51,6 @@ def init_client(key_num):
         return None, env_key_name
     return Groq(api_key=api_key, timeout=30.0), env_key_name
 
-
 if key_choice == 'auto':
     auto_mode = True
     client, env_key_name = init_client(current_key_idx)
@@ -59,7 +58,7 @@ if key_choice == 'auto':
         console.print(f"[bold red]ОШИБКА: Стартовый ключ {env_key_name} не найден в .env![/bold red]")
         exit()
     console.print(f"\n[bold green]✅ Включен АВТОРЕЖИМ. Старт с: {env_key_name}[/bold green]\n")
-elif key_choice in ['1', '2', '3', '4', '5', '6', '7']:
+elif key_choice in ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10']:
     current_key_idx = int(key_choice)
     client, env_key_name = init_client(current_key_idx)
     if not client:
@@ -73,30 +72,27 @@ else:
         console.print("[bold red]ОШИБКА: Ключ GROQ_API_KEY_1 отсутствует в .env![/bold red]")
         exit()
 
-
 def rotate_api_key(attempts=0):
     global client, current_key_idx
-    if attempts >= 7:
-        console.print("[bold red]❌ Все 7 ключей невалидны или отсутствуют в .env![/bold red]")
+    if attempts >= 10:
+        console.print("[bold red]❌ Все 10 ключей невалидны или отсутствуют в .env![/bold red]")
         return False
 
     current_key_idx += 1
-    if current_key_idx > 7:
+    if current_key_idx > 10:
         current_key_idx = 1
-        console.print("[yellow]⏳ Прошли все 7 ключей. Возвращаемся к 1-му. Ждем 5 сек...[/yellow]")
+        console.print("[yellow]⏳ Прошли все 10 ключей. Возвращаемся к 1-му. Ждем 5 сек...[/yellow]")
         time.sleep(5)
 
     new_client, env_key_name = init_client(current_key_idx)
     if new_client:
         client = new_client
-        console.print(f"\n[bold magenta]🔄 Лимит! Авто-переключение на: {env_key_name}[/bold magenta]")
+        console.print(f"\n[yellow]🔄 Лимит! Авто-переключение на: {env_key_name}[/yellow]")
         return True
     else:
         return rotate_api_key(attempts + 1)
 
-
 MODEL_NAME = "llama-3.1-8b-instant"
-
 
 def generate_dynamic_scenario():
     terrain_str = f"{random.choice(TERRAIN)}, {random.choice(PLANES)}" if random.random() < 0.2 else random.choice(
@@ -117,9 +113,7 @@ def generate_dynamic_scenario():
 
     return {"loc": loc, "party": party, "level": level, "imp": imp}
 
-
-def ask_llm_auditor(scen, item, gatekeeper_log, synergy_count, party_size, max_retries=15):
-
+def ask_llm_auditor(scen, item, gatekeeper_log, synergy_count, party_size, max_retries=25):
 
     system_prompt = """You are a Data Auditor and an experienced Dungeon Master for D&D 5e.
 Your task is to provide a final evaluation (Score from 0.150 to 0.990) based on NARRATIVE APPROPRIATENESS, ROLEPLAY UTILITY, and GATEKEEPER NOTES.
@@ -185,14 +179,11 @@ Perform the analysis and output JSON."""
             if any(code in error_msg for code in ["429", "rate_limit", "limit", "too_many"]):
                 if auto_mode:
                     rotation_count += 1
-                    if rotation_count >= 7:
-                        # ЕСЛИ ПРОШЛИ 7 КЛЮЧЕЙ И ВСЕ В ЛИМИТЕ — ПОЛНОСТЬЮ ОСТАНАВЛИВАЕМ СКРИПТ!
-                        console.print("\n[bold red]🚨 ВСЕ 7 КЛЮЧЕЙ ИСЧЕРПАЛИ ЛИМИТЫ![/bold red]")
+                    if rotation_count >= 10:
+                        console.print("\n[bold red]🚨 ВСЕ 10 КЛЮЧЕЙ ИСЧЕРПАЛИ ЛИМИТЫ![/bold red]")
                         console.print(
-                            "[bold red]🛑 Генератор остановлен на 30 минут, чтобы не испортить баланс выборки...[/bold red]\n")
-                        time.sleep(1800)  # Спим полчаса
-                        rotation_count = 0  # Сбрасываем счетчик после сна
-                        continue  # Пытаемся отправить ТОТ ЖЕ предмет снова!
+                            "[bold red]🛑 Генератор принудительно завершает работу. Текущий прогресс сохранен в CSV.[/bold red]\n")
+                        sys.exit(1)
                     else:
                         rotate_api_key()
                         time.sleep(1)
@@ -203,7 +194,7 @@ Perform the analysis and output JSON."""
                     time.sleep(wait_time)
                     continue
 
-            # 2. ПРОБЛЕМЫ С СЕТЬЮ / СЕРВЕРОМ GROQ (НЕ МЕНЯЕМ КЛЮЧ, просто ждем восстановления связи)
+            # 2. ПРОБЛЕМЫ С СЕТЬЮ / СЕРВЕРОМ GROQ
             elif any(code in error_msg for code in
                      ["timeout", "503", "502", "500", "connection", "connect", "network", "peer"]):
                 console.print(f"[yellow]⏳ Сбой сети/сервера Groq. Ждем 15 сек... (Попытка {attempt + 1})[/yellow]")
@@ -218,7 +209,6 @@ Perform the analysis and output JSON."""
                 continue
 
     return None, "Timeout limit exceeded."
-
 
 # --- ЗАГРУЗКА ---
 console.print("[bold green]Загрузка ИИ-компонентов и векторной базы...[/bold green]")
@@ -389,7 +379,7 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
             target_y = round(max(0.001, min(0.999, hard_score)), 4)
             final_output_text = f"[magenta][Gatekeeper]: {gatekeeper_log}[/magenta]"
         else:
-            score, llm_reason = ask_llm_auditor(scen, item, gatekeeper_log, synergy_count, party_size, is_dup)
+            score, llm_reason = ask_llm_auditor(scen, item, gatekeeper_log, synergy_count, party_size)
 
             if score is None:
                 progress.console.print(f"[red]⚠️ Пропуск: {llm_reason}[/red]")
