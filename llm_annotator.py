@@ -109,7 +109,7 @@ def generate_dynamic_scenario():
 
     party = ", ".join(party_members)
     level = random.randint(1, 20)
-    imp = round(random.betavariate(2, 5), 2)
+    imp = round(random.uniform(0.0, 1.0), 2)
 
     return {"loc": loc, "party": party, "level": level, "imp": imp}
 
@@ -425,9 +425,10 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
 
         progress.console.print(
             f"[dim]Лут:[/dim] [cyan]{item['name'][:25]:<25}[/cyan] | "
-            f"[bold white]Y: {target_y:.4f}[/bold white] | "
+            f"[bold yellow]Y: {target_y:.4f}[/bold yellow] | Imp: {scen['imp']:.2f} | "
             f"[dim]L: {l_s:.3f} (N:{norm_l:.2f}) | P: {p_s:.3f} (N:{norm_p:.2f}) | "
-            f"D: {delta} | Syn: {syn_density:.2f} | Dup: {int(is_dup)}[/dim] | Imp: {scen['imp']:.2f}\n"
+            f"BQ: {base_quality:.2f} | Rar: {rarity_val} | D: {delta} | "
+            f"Syn: {syn_density:.2f} | Dup: {int(is_dup)} | Cons: {int(is_consumable)}[/dim]\n"
             f"{final_output_text}\n"
         )
 
