@@ -307,6 +307,7 @@ class SmartLootGenerator:
         console.print()
         table = Table(title="[dim]🛠️ DEBUG: ТОП-5 ПРЕДМЕТОВ ГЛАЗАМИ МОДЕЛИ[/dim]", box=box.SIMPLE)
         table.add_column("Название", style="cyan")
+        table.add_column("Источник", style="italic white")
         table.add_column("Сходство (L | P)", justify="center", style="green")
         table.add_column("Дельта Ур.", justify="center", style="yellow")
         table.add_column("Редкость", justify="center", style="magenta")
@@ -322,14 +323,17 @@ class SmartLootGenerator:
                                                                 'final_score'] >= base_score_threshold else "[bold red]❌ ОТКЛОНЕН[/bold red]"
 
             ohe_str = f"[{','.join(map(lambda x: str(int(x)), c['type_ohe_vector']))}]"
+
             name_short = c['name'][:20] + "..." if len(c['name']) > 20 else c['name']
+            source_raw = str(c.get('source', 'Unknown'))
+            source_short = source_raw[:15] + "..." if len(source_raw) > 15 else source_raw
 
             table.add_row(
                 name_short,
+                source_short,
                 f"{c['loc_score']:.2f} | {c['party_score']:.2f}",
                 f"{int(c['delta']):+d}",
                 f"{c['rarity_val']:.1f}",
-                f"{c['importance']:.2f}",
                 f"{c['synergy_density']:.2f}",
                 f"{int(c['is_consumable'])} | {int(c['is_duplicate'])}",
                 ohe_str,
