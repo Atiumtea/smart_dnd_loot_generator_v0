@@ -334,11 +334,8 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
             else:
                 reason_parts.append(f"Weak context bottleneck (Min={bottleneck:.2f})")
 
-        expected_rarity = 1.0 + scen['imp'] * 4.0 #заменить на 5
+        expected_rarity = 1.0 + scen['imp'] * 5.0
         rarity_diff = rarity_val - expected_rarity
-
-        if rarity_val >= 6.0 and scen['imp'] >= 0.85: # вырезать
-            rarity_diff = 0.0
 
         if rarity_diff > 0.5:
             severity = (rarity_diff / 1.5) ** 2
