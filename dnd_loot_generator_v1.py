@@ -310,7 +310,6 @@ class SmartLootGenerator:
         table.add_column("Сходство (L | P)", justify="center", style="green")
         table.add_column("Дельта Ур.", justify="center", style="yellow")
         table.add_column("Редкость", justify="center", style="magenta")
-        table.add_column("Важность", justify="center", style="magenta")
         table.add_column("Синергия", justify="center", style="blue")
         table.add_column("Флаги (Расх | Дубл)", justify="center", style="red")
         table.add_column("OHE-вектор (9 типов)", justify="center", style="dim")
