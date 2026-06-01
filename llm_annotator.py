@@ -308,7 +308,7 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
         syn_density = synergy_count / max(1, party_size)
 
         # ==========================================
-        # ГЛАДКИЙ PYTHON GATEKEEPER (SMOOTH PENALTIES)
+        #             PYTHON GATEKEEPER
         # ==========================================
         penalty_multiplier = 1.0
         reason_parts = []
@@ -363,7 +363,7 @@ with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.descripti
             reason_parts.append("Duplicate non-consumable equipment (Loot bloat - apply penalty)")
 
         # ==========================================
-        # МАРШРУТИЗАЦИЯ И БАЛАНСИРОВКА
+        #       МАРШРУТИЗАЦИЯ И БАЛАНСИРОВКА
         # ==========================================
         is_hard_penalty = force_python or (penalty_multiplier < 0.40)
 

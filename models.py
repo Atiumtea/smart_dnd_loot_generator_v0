@@ -3,7 +3,7 @@ import numpy as np
 import re
 
 # ==========================================
-# 1. КОНСТАНТЫ И СИНЕРГИЯ (МЕХАНИКА)
+# 1.   КОНСТАНТЫ И СИНЕРГИЯ (МЕХАНИКА)
 # ==========================================
 ITEM_TYPES = [
     'weapon', 'armor', 'potion', 'ring', 'scroll',
@@ -216,7 +216,7 @@ CLASS_LORE = {
 }
 
 # ==========================================
-# 3. МАССИВЫ ДЛЯ ГЕНЕРАЦИИ ПРИМЕРОВ (UI)
+# 3.  МАССИВЫ ДЛЯ ГЕНЕРАЦИИ ПРИМЕРОВ (UI)
 # ==========================================
 TERRAIN = [
     "dark crypt", "abandoned mine", "city slums", "sewers network",
@@ -282,7 +282,7 @@ ENEMY_ACTIONS = [
 ]
 
 # ==========================================
-# 4. ВСПОМОГАТЕЛЬНАЯ ЛОГИКА
+# 4.       ВСПОМОГАТЕЛЬНАЯ ЛОГИКА
 # ==========================================
 def get_type_ohe(item_type_str: str) -> list:
     item_type_str = item_type_str.lower()
@@ -315,7 +315,7 @@ def build_party_semantics(party_input_string: str) -> tuple[str, list[str]]:
     return final_text, found_base_classes
 
 # ==========================================
-# 5. АРХИТЕКТУРА НЕЙРОСЕТИ
+# 5.       АРХИТЕКТУРА НЕЙРОСЕТИ
 # ==========================================
 class DnDItemRanker(nn.Module):
     def __init__(self, input_size=None):
@@ -337,7 +337,7 @@ class DnDItemRanker(nn.Module):
         return self.network(x)
 
 # ==========================================
-# 6. УТИЛИТЫ ДЛЯ РЕДКОСТИ И УРОВНЕЙ (TIER BRACKETS)
+# 6.   УТИЛИТЫ ДЛЯ РЕДКОСТИ И УРОВНЕЙ
 # ==========================================
 def get_rarity_val(rarity_str: str, party_level: int = 1) -> int:
     r = str(rarity_str).lower()

@@ -18,7 +18,6 @@ import os
 import random
 from models import DnDItemRanker, ITEM_TYPES
 
-
 def set_seed(seed=42):
     random.seed(seed)
     np.random.seed(seed)
@@ -26,13 +25,11 @@ def set_seed(seed=42):
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
 
-
 sns.set_theme(style="whitegrid")
 plt.rcParams['figure.figsize'] = (10, 6)
 
-
 # ==========================================
-# Обертка PyTorch модели для sklearn (для Feature Importance)
+# Обертка PyTorch модели для Feature Importance
 # ==========================================
 class PyTorchWrapper(BaseEstimator, RegressorMixin):
     def __init__(self, model):
@@ -46,9 +43,8 @@ class PyTorchWrapper(BaseEstimator, RegressorMixin):
         with torch.no_grad():
             return self.model(torch.tensor(X, dtype=torch.float32)).numpy().flatten()
 
-
 # ==========================================
-# 1. ДАТАСЕТ
+# 1.              ДАТАСЕТ
 # ==========================================
 class DnDDataset(Dataset):
     def __init__(self, X, y):
@@ -61,9 +57,8 @@ class DnDDataset(Dataset):
     def __getitem__(self, idx):
         return self.X[idx], self.y[idx]
 
-
 # ==========================================
-# 2. ПОДГОТОВКА ДАННЫХ
+# 2.         ПОДГОТОВКА ДАННЫХ
 # ==========================================
 def load_training_data():
     print("📦 Загрузка размеченного датасета (LLM + Эвристики)...")
@@ -80,9 +75,8 @@ def load_training_data():
         print("❌ Датасет 'llm_gold_standard.csv' не найден. Сначала запусти llm_annotator.py!")
         exit()
 
-
 # ==========================================
-# 3. ОСНОВНОЙ СКРИПТ ОБУЧЕНИЯ
+# 3.      ОСНОВНОЙ СКРИПТ ОБУЧЕНИЯ
 # ==========================================
 def train_and_evaluate():
     set_seed(42)
@@ -189,7 +183,7 @@ def train_and_evaluate():
     model.load_state_dict(torch.load('dnd_hybrid_weights.pth', weights_only=True))
 
     # ==========================================
-    # 4. АНАЛИТИКА И РАСЧЕТ НОВЫХ МЕТРИК
+    # 4.      АНАЛИТИКА И РАСЧЕТ МЕТРИК
     # ==========================================
     model.eval()
     with torch.no_grad():
@@ -210,22 +204,6 @@ def train_and_evaluate():
     else:
         ndcg_k, precision_k = 0.0, 0.0
 
-    k_hr = min(5, len(y_test))
-    if k_hr > 0:
-        true_top_k = set(np.argsort(y_test)[::-1][:k_hr])
-        pred_top_k = set(np.argsort(y_pred_final)[::-1][:k_hr])
-        hr_at_5 = len(true_top_k.intersection(pred_top_k)) / k_hr
-    else:
-        hr_at_5 = 0.0
-
-    if len(y_test) > 0:
-        best_true_idx = np.argmax(y_test)
-        sorted_pred_indices = np.argsort(y_pred_final)[::-1]
-        best_item_rank = np.where(sorted_pred_indices == best_true_idx)[0][0] + 1
-        mrr = 1.0 / best_item_rank
-    else:
-        mrr = 0.0
-
     y_test_bin = (y_test >= 0.60).astype(int)
     if sum(y_test_bin) > 0 and sum(y_test_bin) < len(y_test_bin):
         precision, recall, _ = precision_recall_curve(y_test_bin, y_pred_final)
@@ -245,8 +223,6 @@ def train_and_evaluate():
     print(f"Spearman Corr: {spearman_corr:.4f} (ближе к 1.0 = идеальная сортировка)")
     print(f"NDCG@{k_val}:      {ndcg_k:.4f} (качество Топ-{k_val})")
     print(f"Precision@{k_val}: {precision_k:.1%} (доля хитов с Y >= 0.70 в Топ-{k_val})")
-    print(f"Hit Rate@5:    {hr_at_5:.1%} (пересечение идеального ТОП-5 и предсказанного)")
-    print(f"MRR:           {mrr:.4f} (позиция лучшего предмета, 1.0 = 1-е место)")
     print("=" * 50)
 
     os.makedirs("model_report_plots", exist_ok=True)
